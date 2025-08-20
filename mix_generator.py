@@ -82,13 +82,24 @@ class MixGenerator:
         # The actual calculated BPMs may differ slightly due to discrete sample precision,
         # but for crossfading we must use the exact target BPM to ensure perfect matching
         
-        target_bpm_for_crossfade = None
+        # Determine the uniform BPM that both tracks should use for crossfading
         if self.tempo_strategy == "sequential":
             target_bpm_for_crossfade = track1_stretched.bpm  # Use track1's BPM as reference
+            print(f"  Sequential crossfade BPM: {target_bpm_for_crossfade:.3f} (track1's BPM)")
         elif self.tempo_strategy == "uniform":
             target_bpm_for_crossfade = self.target_bpm  # Use the exact uniform target BPM
+            print(f"  Uniform crossfade BPM: {target_bpm_for_crossfade:.3f} (target BPM)")
         
-        print(f"  Final BPMs after stretching: Track1={track1_stretched.bpm:.3f}, Track2={track2_stretched.bpm:.3f}")
+        # Show what BPMs were actually achieved after stretching
+        track1_actual_bpm = track1_stretched.bpm
+        track2_actual_bpm = track2_stretched.bpm
+        print(f"  Final BPMs after stretching: Track1={track1_actual_bpm:.3f}, Track2={track2_actual_bpm:.3f}")
+        
+        # In uniform mode, if track1 wasn't stretched, show what BPM it should have for context
+        if self.tempo_strategy == "uniform" and not stretch_track1:
+            print(f"  Note: Track1 not stretched (first track in sequence), target BPM = {self.target_bpm:.3f}")
+        elif self.tempo_strategy == "sequential":
+            print(f"  Note: Sequential mode - Track1 at native BPM, Track2 stretched to match")
         
         # Create corrected tracks with uniform BPM for crossfading
         track1_for_crossfade = Track(
