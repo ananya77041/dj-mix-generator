@@ -111,13 +111,19 @@ class MixGenerator:
         
         return transition, track2
     
-    def generate_mix(self, tracks: List[Track], output_path: str, transition_duration: float = 30.0):
-        """Generate the complete DJ mix"""
+    def generate_mix(self, tracks: List[Track], output_path: str, transition_duration: float = 30.0, transitions_only: bool = False):
+        """Generate the complete DJ mix or just the transitions"""
         if len(tracks) < 2:
             raise ValueError("Need at least 2 tracks to create a mix")
         
-        print(f"Generating mix with {len(tracks)} tracks...")
+        if transitions_only:
+            print("Generating transitions-only preview with 5s buffers...")
+        else:
+            print(f"Generating mix with {len(tracks)} tracks...")
         print(f"Transition duration: {transition_duration}s\n")
+        
+        if transitions_only:
+            return self._generate_transitions_only(tracks, output_path, transition_duration)
         
         # Start with the first track
         mix_audio = tracks[0].audio.copy()
@@ -176,3 +182,102 @@ class MixGenerator:
         print(f"Duration: {duration_minutes:.1f} minutes")
         print(f"Sample rate: {current_sr} Hz")
         print(f"File size: {os.path.getsize(output_path) / (1024*1024):.1f} MB")
+    
+    def _generate_transitions_only(self, tracks: List[Track], output_path: str, transition_duration: float):
+        """
+        Generate only the transition sections with 5-second buffers for preview testing
+        Each transition includes 5s from end of current track + transition + 5s from start of next track
+        """
+        print("Creating transitions-only preview for testing...")
+        
+        current_sr = tracks[0].sr
+        buffer_duration = 5.0  # 5 seconds before/after each transition
+        buffer_samples = int(buffer_duration * current_sr)
+        
+        all_transitions = []
+        silence_gap = np.zeros(int(1.0 * current_sr))  # 1 second gap between transitions
+        
+        for i in range(len(tracks) - 1):
+            current_track = tracks[i]
+            next_track = tracks[i + 1]
+            
+            print(f"Transition {i+1}: {current_track.filepath.name} → {next_track.filepath.name}")
+            
+            # Ensure sample rates match
+            if next_track.sr != current_sr:
+                print(f"  Resampling {next_track.filepath.name} from {next_track.sr}Hz to {current_sr}Hz")
+                next_track.audio = librosa.resample(
+                    next_track.audio, 
+                    orig_sr=next_track.sr, 
+                    target_sr=current_sr
+                )
+                next_track.sr = current_sr
+            
+            # Create a mock "previous track state" for transition generation
+            # Use the full current track as if it were the current mix state
+            prev_track = Track(
+                filepath=current_track.filepath,
+                audio=current_track.audio,
+                sr=current_sr,
+                bpm=current_track.bpm,
+                key=current_track.key,
+                beats=current_track.beats,
+                downbeats=current_track.downbeats,
+                duration=current_track.duration
+            )
+            
+            # Generate the transition
+            transition, stretched_track = self.create_transition(prev_track, next_track, transition_duration)
+            
+            # Find the transition points in the original tracks
+            track1_end_sample, track2_start_sample = self.beat_aligner.find_optimal_transition_points(
+                prev_track, stretched_track, transition_duration
+            )
+            
+            # Extract 5s buffer before transition from current track
+            pre_buffer_start = max(0, track1_end_sample - int(transition_duration * current_sr) - buffer_samples)
+            pre_buffer_end = max(0, track1_end_sample - int(transition_duration * current_sr))
+            pre_buffer = current_track.audio[pre_buffer_start:pre_buffer_end]
+            
+            # Extract 5s buffer after transition from next track
+            post_buffer_start = track2_start_sample + int(transition_duration * current_sr)
+            post_buffer_end = min(len(stretched_track.audio), post_buffer_start + buffer_samples)
+            post_buffer = stretched_track.audio[post_buffer_start:post_buffer_end]
+            
+            # Combine: pre-buffer + transition + post-buffer
+            if len(pre_buffer) > 0 and len(transition) > 0 and len(post_buffer) > 0:
+                transition_segment = np.concatenate([pre_buffer, transition, post_buffer])
+                all_transitions.append(transition_segment)
+                
+                segment_duration = len(transition_segment) / current_sr
+                print(f"  Transition segment: {segment_duration:.1f}s (5s + {transition_duration}s + 5s)")
+            else:
+                print(f"  Warning: Could not create full transition segment")
+                if len(transition) > 0:
+                    all_transitions.append(transition)
+        
+        if not all_transitions:
+            raise ValueError("No transitions could be generated")
+        
+        # Combine all transitions with silence gaps
+        final_mix = all_transitions[0]
+        for transition in all_transitions[1:]:
+            final_mix = np.concatenate([final_mix, silence_gap, transition])
+        
+        # Normalize audio
+        max_val = np.max(np.abs(final_mix))
+        if max_val > 0.95:
+            print(f"Normalizing transitions preview (peak: {max_val:.3f})")
+            final_mix = final_mix * (0.95 / max_val)
+        
+        # Save transitions-only mix
+        print(f"Saving transitions preview to: {output_path}")
+        sf.write(output_path, final_mix, current_sr)
+        
+        duration_minutes = len(final_mix) / current_sr / 60
+        print(f"\n🎵 Transitions preview complete!")
+        print(f"Contains {len(all_transitions)} transitions")
+        print(f"Duration: {duration_minutes:.1f} minutes")
+        print(f"Sample rate: {current_sr} Hz")
+        print(f"File size: {os.path.getsize(output_path) / (1024*1024):.1f} MB")
+        print("Listen to this file to test transition quality before generating full mix!")

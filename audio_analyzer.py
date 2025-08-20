@@ -79,87 +79,175 @@ class AudioAnalyzer:
     
     def _detect_downbeats(self, audio: np.ndarray, sr: int, beats: np.ndarray, bpm: float) -> np.ndarray:
         """
-        Detect downbeats (strong beats that mark the beginning of musical measures)
-        Uses spectral analysis and beat strength to identify measure boundaries
+        Enhanced downbeat detection optimized for kick drums and percussive elements
+        Uses multiple spectral analysis techniques for better accuracy
         """
         try:
-            # Calculate beat times in seconds
-            beat_times = librosa.frames_to_time(beats, sr=sr)
-            
             # Estimate typical beats per measure (assume 4/4 time signature)
             beats_per_measure = 4
             
-            # Calculate spectral features at beat positions for strength analysis
-            onset_envelope = librosa.onset.onset_strength(y=audio, sr=sr)
-            beat_strengths = []
+            # Method 1: Percussive element analysis (kick drums, claps)
+            # Separate percussive and harmonic content
+            percussive, harmonic = librosa.effects.hpss(audio)
             
-            for beat in beats:
+            # Focus on low-frequency content for kick drums (20-250 Hz)
+            kick_freq_audio = librosa.effects.preemphasis(percussive)
+            
+            # Calculate enhanced onset strength focusing on percussive elements
+            onset_envelope = librosa.onset.onset_strength(
+                y=kick_freq_audio, 
+                sr=sr,
+                aggregate=np.median,  # Use median for more robust detection
+                fmax=250,  # Focus on kick drum frequency range
+                n_mels=64
+            )
+            
+            # Method 2: Spectral flux analysis for percussive onsets
+            # Calculate spectral flux (measure of spectral change)
+            S = np.abs(librosa.stft(percussive))
+            spectral_flux = np.sum(np.diff(S, axis=1) > 0, axis=0)
+            
+            # Method 3: Beat strength analysis with improved windowing
+            beat_strengths = []
+            percussive_strengths = []
+            
+            for i, beat in enumerate(beats):
                 if beat < len(onset_envelope):
-                    # Get a window around each beat for strength calculation
-                    window_start = max(0, int(beat - 2))
-                    window_end = min(len(onset_envelope), int(beat + 3))
-                    beat_strength = np.mean(onset_envelope[window_start:window_end])
-                    beat_strengths.append(beat_strength)
+                    # Enhanced windowing around each beat
+                    window_start = max(0, int(beat - 3))
+                    window_end = min(len(onset_envelope), int(beat + 4))
+                    
+                    # Multiple strength metrics
+                    onset_strength = np.max(onset_envelope[window_start:window_end])
+                    beat_strengths.append(onset_strength)
+                    
+                    # Percussive strength using spectral flux
+                    if beat < len(spectral_flux):
+                        flux_window_start = max(0, int(beat - 2))
+                        flux_window_end = min(len(spectral_flux), int(beat + 3))
+                        perc_strength = np.max(spectral_flux[flux_window_start:flux_window_end])
+                        percussive_strengths.append(perc_strength)
+                    else:
+                        percussive_strengths.append(0)
                 else:
                     beat_strengths.append(0)
+                    percussive_strengths.append(0)
             
             beat_strengths = np.array(beat_strengths)
+            percussive_strengths = np.array(percussive_strengths)
             
-            # Find potential downbeats using multiple approaches
+            # Method 4: Low-frequency energy analysis for kick drums
+            # Focus on 60-120 Hz range where kick drums are prominent
+            stft = librosa.stft(audio)
+            freqs = librosa.fft_frequencies(sr=sr)
+            kick_freq_mask = (freqs >= 60) & (freqs <= 120)
+            
+            kick_energy = []
+            for beat in beats:
+                beat_sample = librosa.frames_to_samples(beat, hop_length=512)
+                stft_window_start = max(0, beat_sample // 512 - 2)
+                stft_window_end = min(stft.shape[1], beat_sample // 512 + 3)
+                
+                if stft_window_start < stft.shape[1]:
+                    kick_spectrum = np.abs(stft[kick_freq_mask, stft_window_start:stft_window_end])
+                    kick_energy.append(np.max(kick_spectrum) if kick_spectrum.size > 0 else 0)
+                else:
+                    kick_energy.append(0)
+            
+            kick_energy = np.array(kick_energy)
+            
+            # Method 5: Combined scoring system
+            # Normalize all metrics to 0-1 range
+            if np.max(beat_strengths) > 0:
+                beat_strengths = beat_strengths / np.max(beat_strengths)
+            if np.max(percussive_strengths) > 0:
+                percussive_strengths = percussive_strengths / np.max(percussive_strengths)
+            if np.max(kick_energy) > 0:
+                kick_energy = kick_energy / np.max(kick_energy)
+            
+            # Combined score with weights favoring percussive elements
+            combined_score = (
+                0.4 * beat_strengths +      # General onset strength
+                0.35 * percussive_strengths +  # Percussive content
+                0.25 * kick_energy          # Low-frequency kick content
+            )
+            
+            # Find downbeat candidates using enhanced peak detection
             downbeat_candidates = set()
             
-            # Method 1: Regular intervals (assume first beat is a downbeat)
-            if len(beats) > 0:
-                for i in range(0, len(beats), beats_per_measure):
-                    if i < len(beats):
-                        downbeat_candidates.add(i)
-            
-            # Method 2: Peak detection on beat strengths
-            if len(beat_strengths) > 0:
-                # Find peaks in beat strength with minimum distance
-                min_distance = max(1, beats_per_measure - 1)
-                strength_peaks, _ = find_peaks(beat_strengths, 
-                                             distance=min_distance,
-                                             height=np.mean(beat_strengths))
-                downbeat_candidates.update(strength_peaks)
-            
-            # Method 3: Harmonic/tonal analysis for measure boundaries
-            if len(beats) >= beats_per_measure:
-                # Use chromagram to detect harmonic changes that often occur on downbeats
-                chroma = librosa.feature.chroma_stft(y=audio, sr=sr)
+            # Method 6: Peak detection on combined score
+            if len(combined_score) > 0:
+                # Adaptive threshold based on score distribution
+                threshold = np.mean(combined_score) + 0.5 * np.std(combined_score)
+                min_distance = max(2, beats_per_measure - 1)  # Minimum 2 beats apart
                 
-                for i in range(0, len(beats) - beats_per_measure + 1, beats_per_measure):
-                    # Check if there's a significant harmonic change
-                    beat_frame = beats[i]
-                    if beat_frame < chroma.shape[1]:
-                        # Compare harmonic content before and after this beat
-                        window_size = min(10, chroma.shape[1] - beat_frame)
-                        if beat_frame >= window_size and beat_frame + window_size < chroma.shape[1]:
-                            before = chroma[:, beat_frame - window_size:beat_frame]
-                            after = chroma[:, beat_frame:beat_frame + window_size]
-                            
-                            # Calculate harmonic change magnitude
-                            change = np.linalg.norm(np.mean(after, axis=1) - np.mean(before, axis=1))
-                            if change > np.std([np.linalg.norm(np.mean(chroma[:, j:j+window_size], axis=1) - 
-                                                              np.mean(chroma[:, j+window_size:j+2*window_size], axis=1)) 
-                                              for j in range(0, chroma.shape[1] - 2*window_size, window_size)]):
+                peaks, properties = find_peaks(
+                    combined_score, 
+                    height=threshold,
+                    distance=min_distance,
+                    prominence=0.1  # Require significant prominence
+                )
+                downbeat_candidates.update(peaks)
+            
+            # Method 7: Regular interval validation
+            # Start with highest scoring beat in first measure and check regular intervals
+            if len(beats) >= beats_per_measure:
+                # Find the best candidate in the first measure
+                first_measure_end = min(beats_per_measure, len(combined_score))
+                if first_measure_end > 0:
+                    best_first_beat = np.argmax(combined_score[:first_measure_end])
+                    
+                    # Add regular intervals from this starting point
+                    for i in range(best_first_beat, len(beats), beats_per_measure):
+                        if i < len(beats):
+                            downbeat_candidates.add(i)
+            
+            # Method 8: Pattern validation using autocorrelation
+            # Check if the detected pattern repeats consistently
+            if len(combined_score) > beats_per_measure * 2:
+                # Calculate autocorrelation of the combined score
+                autocorr = np.correlate(combined_score, combined_score, mode='full')
+                autocorr = autocorr[len(autocorr)//2:]
+                
+                # Look for peak at expected measure interval
+                expected_interval = beats_per_measure
+                if expected_interval < len(autocorr):
+                    # If strong autocorrelation at measure interval, trust regular pattern more
+                    autocorr_strength = autocorr[expected_interval] / autocorr[0] if autocorr[0] > 0 else 0
+                    
+                    if autocorr_strength > 0.6:  # Strong regular pattern detected
+                        # Add regular intervals starting from best first beat
+                        first_quarter = min(beats_per_measure, len(combined_score))
+                        if first_quarter > 0:
+                            best_start = np.argmax(combined_score[:first_quarter])
+                            for i in range(best_start, len(beats), beats_per_measure):
                                 downbeat_candidates.add(i)
             
-            # Convert candidate indices to beat frame numbers
+            # Convert to sorted list and ensure reasonable spacing
             downbeat_indices = sorted(list(downbeat_candidates))
             
+            # Filter out candidates that are too close together
+            filtered_indices = []
+            min_separation = max(2, beats_per_measure - 1)
+            
+            for idx in downbeat_indices:
+                if not filtered_indices or idx - filtered_indices[-1] >= min_separation:
+                    filtered_indices.append(idx)
+            
             # Ensure we have at least some downbeats
-            if not downbeat_indices and len(beats) > 0:
+            if not filtered_indices and len(beats) > 0:
                 # Fallback: regular intervals starting from first beat
-                downbeat_indices = list(range(0, len(beats), beats_per_measure))
+                filtered_indices = list(range(0, len(beats), beats_per_measure))
             
             # Convert to beat frame numbers
-            downbeats = beats[downbeat_indices] if downbeat_indices else np.array([])
+            downbeats = beats[filtered_indices] if filtered_indices else np.array([])
+            
+            print(f"  Detected {len(downbeats)} downbeats using enhanced percussion analysis")
             
             return downbeats
             
         except Exception as e:
-            print(f"Warning: Downbeat detection failed: {e}")
+            print(f"Warning: Enhanced downbeat detection failed: {e}")
             # Fallback: use regular intervals
             if len(beats) >= 4:
                 return beats[::4]  # Every 4th beat as downbeat

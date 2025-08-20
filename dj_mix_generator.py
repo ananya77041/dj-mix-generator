@@ -67,9 +67,9 @@ class DJMixGenerator:
         else:
             print("Note: Reordering did not improve overall compatibility\n")
     
-    def generate_mix(self, output_path: str, transition_duration: float = 30.0):
-        """Generate the complete DJ mix"""
-        self.mixer.generate_mix(self.tracks, output_path, transition_duration)
+    def generate_mix(self, output_path: str, transition_duration: float = 30.0, transitions_only: bool = False):
+        """Generate the complete DJ mix or just transitions preview"""
+        self.mixer.generate_mix(self.tracks, output_path, transition_duration, transitions_only)
 
 
 def main():
@@ -78,11 +78,13 @@ def main():
         print("Usage: python dj_mix_generator.py [options] <track1.wav> <track2.wav> [track3.wav] ...")
         print("   or: python dj_mix_generator.py --demo")
         print("\nOptions:")
-        print("  --reorder-by-key    Reorder tracks for optimal harmonic mixing")
+        print("  --reorder-by-key       Reorder tracks for optimal harmonic mixing")
+        print("  --transitions-only     Generate only transition sections for testing (with 5s buffers)")
         return
     
     # Parse command line options
     reorder_by_key = False
+    transitions_only = False
     playlist = []
     output_path = "dj_mix.wav"
     
@@ -103,6 +105,11 @@ def main():
             reorder_by_key = True
             args.remove("--reorder-by-key")
         
+        if "--transitions-only" in args:
+            transitions_only = True
+            args.remove("--transitions-only")
+            output_path = "dj_transitions_preview.wav"  # Different filename for transitions
+        
         # Remaining arguments are track files
         playlist = args
         
@@ -118,7 +125,7 @@ def main():
         if reorder_by_key:
             dj.reorder_by_key()
         
-        dj.generate_mix(output_path)
+        dj.generate_mix(output_path, transitions_only=transitions_only)
         
     except Exception as e:
         print(f"Error: {e}")

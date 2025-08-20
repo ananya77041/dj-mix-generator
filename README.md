@@ -7,8 +7,9 @@ A modular Python tool to create continuous DJ mixes from WAV files. The program 
 - **Automatic BPM detection** using librosa's beat tracking
 - **Musical key estimation** with chromagram analysis
 - **Beat matching** via time-stretching to align tempos
-- **Downbeat detection** for precise measure-aligned transitions
+- **Enhanced downbeat detection** optimized for kick drums and percussive elements
 - **Professional DJ transitions** with tracks entering on their first downbeat
+- **Transition preview mode** to test-listen only the transition sections
 - **Smooth crossfade transitions** with equal-power curves (30 seconds default)
 - **Harmonic mixing** with optional key-based track reordering
 - **Audio normalization** to prevent clipping
@@ -58,18 +59,35 @@ The key matching uses Circle of Fifths relationships:
 - **Semitone**: Keys one semitone apart (energy boost)
 - **Clashes**: Avoid awkward key combinations
 
+### Transition Testing (Preview Mode)
+
+```bash
+python dj_mix_generator.py --transitions-only track1.wav track2.wav track3.wav
+```
+
+This creates a preview file (`dj_transitions_preview.wav`) containing only the transition sections:
+- 5 seconds from the end of each track
+- Full 30-second transition
+- 5 seconds from the start of the next track
+- 1-second silence gap between each transition
+
+Perfect for testing downbeat alignment and transition quality before generating the full mix!
+
 ### Example Output
 
 ```
 Loading playlist with 3 tracks...
 
 Analyzing: track1.wav
+  Detected 42 downbeats using enhanced percussion analysis
   [1/3] BPM: 128.0, Key: G major, Duration: 180.5s, Downbeats: 42
 
 Analyzing: track2.wav
+  Detected 48 downbeats using enhanced percussion analysis
   [2/3] BPM: 132.1, Key: A minor, Duration: 210.2s, Downbeats: 48
 
 Analyzing: track3.wav
+  Detected 45 downbeats using enhanced percussion analysis
   [3/3] BPM: 126.8, Key: F major, Duration: 195.7s, Downbeats: 45
 
 Successfully loaded 3 tracks.
@@ -122,18 +140,24 @@ File size: 82.3 MB
    - Time-stretches the incoming track to match the current tempo
    - Preserves pitch while adjusting speed
 
-3. **Downbeat Alignment**: Professional DJ-style transitions:
-   - Detects downbeats using spectral analysis and beat strength
+3. **Enhanced Downbeat Detection**: Optimized for kick drums and percussion:
+   - Separates percussive and harmonic content using HPSS (Harmonic-Percussive Source Separation)
+   - Analyzes low-frequency content (60-120 Hz) for kick drum detection
+   - Uses spectral flux analysis for percussive onset detection
+   - Combines multiple metrics with weighted scoring system
+   - Pattern validation using autocorrelation for consistent measure detection
+   
+4. **Downbeat Alignment**: Professional DJ-style transitions:
    - Finds optimal outro point in current track (ending on downbeat)
    - Finds optimal intro point in next track (starting on downbeat)
    - Ensures next track enters precisely on its first strong downbeat
 
-4. **Crossfading**: Creates smooth transitions using:
+5. **Crossfading**: Creates smooth transitions using:
    - Equal-power crossfade curves (cosine/sine)
    - 30-second default transition duration
    - Beat-aligned segments for seamless mixing
 
-5. **Audio Processing**: 
+6. **Audio Processing**: 
    - Handles different sample rates via resampling
    - Normalizes final output to prevent clipping
    - Maintains audio quality throughout the process
@@ -201,7 +225,13 @@ python dj_mix_generator.py your_track1.wav your_track2.wav your_track3.wav
 # Harmonic mixing (reorders for better key compatibility)
 python dj_mix_generator.py --reorder-by-key your_track1.wav your_track2.wav your_track3.wav
 
-# The output will be saved as dj_mix.wav
+# Test transitions only (for quick previewing)
+python dj_mix_generator.py --transitions-only your_track1.wav your_track2.wav your_track3.wav
+
+# Combine options
+python dj_mix_generator.py --reorder-by-key --transitions-only your_track1.wav your_track2.wav your_track3.wav
+
+# Output files: dj_mix.wav (full mix) or dj_transitions_preview.wav (transitions only)
 ```
 
 Enjoy your automated DJ mixes! 🎧
