@@ -1284,6 +1284,9 @@ class MixGenerator:
         current_sr = first_track.sr
         current_bpm = first_track.bpm
         
+        # Keep track of stretched tracks for proper transitions
+        processed_tracks = [first_track]  # Track the actual processed versions
+        
         # Add each subsequent track with transitions
         for i in range(1, len(tracks)):
             current_track = tracks[i]
@@ -1298,21 +1301,15 @@ class MixGenerator:
                                                      target_sr=current_sr)
                 current_track.sr = current_sr
             
-            # Create a track object representing the current accumulated mix
-            # This is crucial for multi-track mixes - prev_track represents the ENTIRE accumulated mix so far
-            prev_track = Track(
-                filepath=tracks[i-1].filepath,  # Just for reference
-                audio=mix_audio,  # The ENTIRE accumulated mix
-                sr=current_sr,
-                bpm=current_bpm,  # Current mix BPM
-                key=tracks[i-1].key,  # Just for reference
-                beats=tracks[i-1].beats,  # This needs to be reconstructed but we'll use original for now
-                downbeats=tracks[i-1].downbeats,  # This needs to be reconstructed but we'll use original for now
-                duration=len(mix_audio) / current_sr
-            )
+            # CRITICAL FIX: Create transition between the ACTUAL processed previous track and current track
+            # Use the processed version of the previous track (which may have been tempo-stretched)
+            actual_prev_track = processed_tracks[i-1]  # The processed previous track
             
             # Create enhanced transition with professional quality processing  
-            transition, track2_audio, stretched_track = self.create_transition(prev_track, current_track, transition_duration, stretch_track1=False)
+            transition, track2_audio, stretched_track = self.create_transition(actual_prev_track, current_track, transition_duration, stretch_track1=False)
+            
+            # Store the stretched track for future transitions
+            processed_tracks.append(stretched_track)
             
             # Update current BPM for next iteration
             current_bpm = stretched_track.bpm
