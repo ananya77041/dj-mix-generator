@@ -1187,18 +1187,28 @@ def align_beatgrids_interactive(track1: Track, track2: Track, track1_outro: np.n
         Time offset in seconds to apply to track2 for perfect alignment
     """
     
-    # Try Dear PyGui first (recommended for best performance)
+    # Try simplified Dear PyGui first (recommended for best performance)
     try:
-        from beatgrid_gui_dearpygui import align_beatgrids_interactive as dearpygui_align
-        print("  🚀 Using Dear PyGui for GPU-accelerated beatgrid alignment")
-        return dearpygui_align(track1, track2, track1_outro, track2_intro, 
-                              outro_start, track2_start_sample, transition_duration)
+        from beatgrid_gui_simple import align_beatgrids_interactive as simple_dearpygui_align
+        print("  🚀 Using simplified Dear PyGui for GPU-accelerated beatgrid alignment")
+        return simple_dearpygui_align(track1, track2, track1_outro, track2_intro, 
+                                     outro_start, track2_start_sample, transition_duration)
     except ImportError:
         print("  ⚠ Dear PyGui not available - install with: pip install dearpygui>=1.10.0")
         print("  📉 Falling back to matplotlib-based interface (slower performance)")
     except Exception as e:
-        print(f"  ❌ Dear PyGui interface failed: {e}")
-        print("  📉 Falling back to matplotlib-based interface")
+        print(f"  ❌ Simplified Dear PyGui interface failed: {e}")
+        print("  📉 Trying complex Dear PyGui interface...")
+        
+        # Try complex Dear PyGui as fallback
+        try:
+            from beatgrid_gui_dearpygui import align_beatgrids_interactive as dearpygui_align
+            print("  🔄 Using complex Dear PyGui interface")
+            return dearpygui_align(track1, track2, track1_outro, track2_intro, 
+                                  outro_start, track2_start_sample, transition_duration)
+        except Exception as e2:
+            print(f"  ❌ Complex Dear PyGui also failed: {e2}")
+            print("  📉 Falling back to matplotlib-based interface")
     
     # Fallback to matplotlib-based interface
     try:
