@@ -235,31 +235,8 @@ class DownbeatSelector:
         if click_time is None or click_time < 0 or click_time > self.display_duration:
             return
         
-        # Find the best snap target - prioritize suggested downbeat, then measure markers, then beats
+        # No snapping - use exact click position for maximum precision
         selected_time = click_time
-        snap_threshold = 0.15  # seconds
-        
-        # Check if close to suggested first downbeat
-        if (self.auto_first_downbeat is not None and 
-            abs(click_time - self.auto_first_downbeat) < snap_threshold):
-            selected_time = self.auto_first_downbeat
-            print(f"  Snapped to suggested first downbeat at {selected_time:.3f}s")
-        
-        # Check if close to any measure marker
-        elif len(self.auto_measure_markers) > 0:
-            measure_distances = np.abs(np.array(self.auto_measure_markers) - click_time)
-            closest_measure_idx = np.argmin(measure_distances)
-            if measure_distances[closest_measure_idx] < snap_threshold:
-                selected_time = self.auto_measure_markers[closest_measure_idx]
-                print(f"  Snapped to measure marker at {selected_time:.3f}s")
-        
-        # Check if close to any detected beat
-        elif len(self.display_beats) > 0:
-            beat_distances = np.abs(self.display_beats - click_time)
-            closest_beat_idx = np.argmin(beat_distances)
-            if beat_distances[closest_beat_idx] < snap_threshold:
-                selected_time = self.display_beats[closest_beat_idx]
-                print(f"  Snapped to detected beat at {selected_time:.3f}s")
         
         # Handle selection based on current mode
         if self.selection_mode == 'first':
@@ -302,6 +279,81 @@ class DownbeatSelector:
             self.calculated_bpm = round(raw_bpm)  # Round to nearest whole number
         
         print(f"Calculated BPM: {raw_bpm:.2f} → Quantized: {self.calculated_bpm:.1f}")
+        
+        # Recalculate beat and measure markers based on new tempo
+        self._recalculate_markers_for_new_tempo()
+    
+    def _recalculate_markers_for_new_tempo(self):
+        """Recalculate beat and measure markers based on user-selected tempo"""
+        if self.first_downbeat is None or self.second_downbeat is None:
+            return
+        
+        # Calculate beat interval from user's tempo selection
+        beats_per_second = self.calculated_bpm / 60.0
+        beat_interval = 1.0 / beats_per_second
+        measure_interval = beat_interval * 4  # 4 beats per measure
+        
+        # Generate new beat markers based on first downbeat and calculated tempo
+        new_beat_times = []
+        new_measure_markers = []
+        
+        # Add beats and measures starting from first downbeat
+        current_beat = self.first_downbeat
+        beat_count = 0
+        while current_beat <= self.display_duration:
+            new_beat_times.append(current_beat)
+            
+            # Every 4th beat is a measure marker
+            if beat_count % 4 == 0:
+                new_measure_markers.append(current_beat)
+            
+            current_beat += beat_interval
+            beat_count += 1
+        
+        # Add beats and measures before first downbeat if possible
+        current_beat = self.first_downbeat - beat_interval
+        beat_count = 1  # Start at 1 to maintain the 4-beat cycle
+        while current_beat >= 0:
+            new_beat_times.insert(0, current_beat)
+            
+            # Every 4th beat is a measure marker (counting backwards)
+            if beat_count % 4 == 0:
+                new_measure_markers.insert(0, current_beat)
+            
+            current_beat -= beat_interval
+            beat_count += 1
+        
+        # Update the marker arrays
+        self.display_beats = np.array(new_beat_times)
+        self.auto_measure_markers = new_measure_markers
+        
+        # Redraw the markers
+        self._redraw_markers()
+    
+    def _redraw_markers(self):
+        """Redraw beat and measure markers on the plot"""
+        # Clear existing marker lines (but keep waveform and selection lines)
+        lines_to_remove = []
+        for line in self.ax_wave.lines[:]:
+            # Remove orange beat lines and purple measure lines, but keep waveform and selection lines
+            if hasattr(line, 'get_color'):
+                color = line.get_color()
+                if color == 'orange' or color == 'purple' or color == 'blue':
+                    lines_to_remove.append(line)
+        
+        for line in lines_to_remove:
+            line.remove()
+        
+        # Redraw beat markers (softer)
+        for beat_time in self.display_beats:
+            self.ax_wave.axvline(x=beat_time, color='orange', alpha=0.3, linestyle=':', linewidth=0.8)
+        
+        # Redraw measure markers (stronger)
+        for measure_time in self.auto_measure_markers:
+            self.ax_wave.axvline(x=measure_time, color='purple', alpha=0.6, linestyle='-', linewidth=1.5)
+        
+        # Refresh the plot
+        self.fig.canvas.draw()
     
     def _update_selection_visual(self):
         """Update the visual indicators for selected downbeats and BPM"""
@@ -409,7 +461,7 @@ class DownbeatSelector:
         plt.tight_layout()
         plt.show(block=True)
         
-        return self.selected_downbeat
+        return None  # Result is handled via callback
 
 
 def select_first_downbeat(audio: np.ndarray, sr: int, track_name: str, beats: np.ndarray, 
