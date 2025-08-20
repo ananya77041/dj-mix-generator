@@ -1301,12 +1301,17 @@ class MixGenerator:
                                                      target_sr=current_sr)
                 current_track.sr = current_sr
             
-            # CRITICAL FIX: Create transition between the ACTUAL processed previous track and current track
-            # Use the processed version of the previous track (which may have been tempo-stretched)
+            # SIMPLE NATURAL DJ MIXING: Just stretch the track to match tempo and overlay
             actual_prev_track = processed_tracks[i-1]  # The processed previous track
             
-            # Create enhanced transition with professional quality processing  
-            transition, track2_audio, stretched_track = self.create_transition(actual_prev_track, current_track, transition_duration, stretch_track1=False)
+            # Stretch the current track to match the target BPM
+            if self.tempo_strategy == "sequential":
+                # Sequential: stretch current track to match previous track's BPM
+                target_bpm_for_current = actual_prev_track.bpm
+                stretched_track = self._stretch_track_to_bpm(current_track, target_bpm_for_current)
+            elif self.tempo_strategy == "uniform":
+                # Uniform: stretch current track to target BPM
+                stretched_track = self._stretch_track_to_bpm(current_track, self.target_bpm)
             
             # Store the stretched track for future transitions
             processed_tracks.append(stretched_track)
