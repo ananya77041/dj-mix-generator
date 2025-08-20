@@ -62,7 +62,7 @@ class MixGenerator:
             raise ValueError(f"Unknown tempo strategy: {self.tempo_strategy}")
         
     def create_transition(self, track1: Track, track2: Track, transition_duration: float = 30.0, 
-                         stretch_track1: bool = False) -> Tuple[np.ndarray, np.ndarray, Track]:
+                         stretch_track1: bool = False) -> Tuple[np.ndarray, Track]:
         """Create a beat-aligned crossfade transition between two tracks"""
         if self.target_bpm is None:
             raise ValueError("Target BPM not set. Call calculate_target_bpm() first.")
@@ -141,7 +141,7 @@ class MixGenerator:
         else:
             print(f"  ✅ Perfect BPM match for crossfade (difference: {bpm_diff:.6f})")
         
-        return self._create_crossfade(track1_for_crossfade, track2_for_crossfade, transition_duration)
+        return self._create_seamless_transition(track1_for_crossfade, track2_for_crossfade, transition_duration)
     
     def _stretch_track_to_bpm(self, track: Track, target_bpm: float) -> Track:
         """Stretch a track to match target BPM with intelligent tempo correction
@@ -735,6 +735,260 @@ class MixGenerator:
             print(f"    Warning: Peak-to-beat alignment failed: {e}")
             return audio
     
+    def _create_seamless_transition(self, track1: Track, track2: Track, transition_duration: float) -> Tuple[np.ndarray, Track]:
+        """
+        Create a seamless transition that maintains full track continuity.
+        Processes complete tracks while applying quality improvements only to transition regions.
+        """
+        print(f"  Creating seamless transition with full track continuity...")
+        
+        # Find optimal transition points using downbeat alignment
+        print(f"  Aligning to downbeats...")
+        track1_end_sample, track2_start_sample = self.beat_aligner.find_optimal_transition_points(
+            track1, track2, transition_duration
+        )
+        
+        # Calculate transition region boundaries
+        transition_samples = int(transition_duration * track1.sr)
+        track1_outro_start = max(0, track1_end_sample - transition_samples)
+        track2_intro_end = min(len(track2.audio), track2_start_sample + transition_samples)
+        
+        # Report the alignment
+        track1_end_time = track1_end_sample / track1.sr
+        track2_start_time = track2_start_sample / track2.sr
+        print(f"  Track 1 outro: {track1_outro_start/track1.sr:.1f}s - {track1_end_time:.1f}s")
+        print(f"  Track 2 intro: {track2_start_time:.1f}s - {track2_intro_end/track2.sr:.1f}s")
+        
+        # Work with complete track copies to maintain continuity
+        track1_processed = track1.audio.copy()
+        track2_processed = track2.audio.copy()
+        
+        # Extract transition regions for quality processing (without disconnecting from full tracks)
+        track1_outro_region = track1_processed[track1_outro_start:track1_end_sample]
+        track2_intro_region = track2_processed[track2_start_sample:track2_intro_end]
+        
+        # Ensure both transition regions are the same length
+        min_transition_length = min(len(track1_outro_region), len(track2_intro_region))
+        if min_transition_length < transition_samples * 0.5:
+            print(f"  Warning: Short transition regions, using fallback")
+            return self._create_fallback_seamless_transition(track1, track2, transition_duration)
+        
+        track1_outro_region = track1_outro_region[:min_transition_length]
+        track2_intro_region = track2_intro_region[:min_transition_length]
+        
+        # Apply professional audio quality improvements to transition regions only
+        track1_outro_enhanced, track2_intro_enhanced = self._apply_transition_quality_processing(
+            track1_outro_region, track2_intro_region, track1, track2, 
+            track1_outro_start, track2_start_sample
+        )
+        
+        # Replace the transition regions in the full tracks with enhanced versions
+        track1_processed[track1_outro_start:track1_outro_start + len(track1_outro_enhanced)] = track1_outro_enhanced
+        track2_processed[track2_start_sample:track2_start_sample + len(track2_intro_enhanced)] = track2_intro_enhanced
+        
+        # Create crossfade between the enhanced transition regions
+        fade_samples = min_transition_length
+        fade_out = np.cos(np.linspace(0, np.pi/2, fade_samples))
+        fade_in = np.sin(np.linspace(0, np.pi/2, fade_samples))
+        
+        # Create the crossfaded transition section
+        crossfade_section = track1_outro_enhanced * fade_out + track2_intro_enhanced * fade_in
+        
+        # Build the complete seamless mix
+        # Part 1: Track1 up to the start of crossfade
+        pre_crossfade = track1_processed[:track1_outro_start]
+        
+        # Part 2: The crossfaded transition
+        transition_part = crossfade_section
+        
+        # Part 3: Track2 from the end of crossfade
+        post_crossfade_start = track2_start_sample + len(crossfade_section)
+        post_crossfade = track2_processed[post_crossfade_start:]
+        
+        # Combine all parts for complete continuity
+        complete_transition = np.concatenate([
+            pre_crossfade,
+            transition_part,
+            post_crossfade
+        ])
+        
+        # Create updated track2 object with processed audio
+        updated_track2 = Track(
+            filepath=track2.filepath,
+            audio=track2_processed,
+            sr=track2.sr,
+            bpm=track2.bpm,
+            key=track2.key,
+            beats=track2.beats,
+            downbeats=track2.downbeats,
+            duration=len(track2_processed) / track2.sr
+        )
+        
+        print(f"  Seamless transition complete - full musical continuity preserved")
+        
+        return complete_transition, updated_track2
+    
+    def _apply_transition_quality_processing(self, track1_outro: np.ndarray, track2_intro: np.ndarray, 
+                                           track1: Track, track2: Track, outro_start: int, intro_start: int) -> Tuple[np.ndarray, np.ndarray]:
+        """
+        Apply professional audio quality improvements to transition regions only.
+        This is the extracted logic from the previous _create_crossfade method.
+        """
+        # PROFESSIONAL AUDIO QUALITY IMPROVEMENTS
+        if self.enable_volume_matching or self.enable_eq_matching:
+            print(f"  Applying professional audio quality processing to transition regions...")
+            
+            # 1. Analyze audio characteristics if needed
+            if self.enable_volume_matching or self.enable_eq_matching:
+                print(f"  Analyzing transition region characteristics...")
+                track1_chars = self._analyze_audio_characteristics(track1_outro, track1.sr)
+                track2_chars = self._analyze_audio_characteristics(track2_intro, track2.sr)
+            
+            # 2. Volume normalization - match RMS levels
+            if self.enable_volume_matching:
+                print(f"  Volume levels - Track1 RMS: {track1_chars['rms']:.4f}, Track2 RMS: {track2_chars['rms']:.4f}")
+                
+                # Use average RMS as target for consistent perceived loudness
+                target_rms = (track1_chars['rms'] + track2_chars['rms']) / 2.0
+                print(f"  Normalizing transition regions to target RMS: {target_rms:.4f}")
+                
+                track1_outro_normalized = self._normalize_volume(track1_outro, target_rms=target_rms)
+                track2_intro_normalized = self._normalize_volume(track2_intro, target_rms=target_rms)
+            else:
+                print(f"  Volume normalization disabled for transition")
+                track1_outro_normalized = track1_outro
+                track2_intro_normalized = track2_intro
+            
+            # 3. EQ matching for seamless tonal continuity
+            if self.enable_eq_matching and self.eq_strength > 0.0:
+                print(f"  Spectral balance - Track1 (L/M/H): {track1_chars['low_ratio']:.2f}/{track1_chars['mid_ratio']:.2f}/{track1_chars['high_ratio']:.2f}")
+                print(f"  Spectral balance - Track2 (L/M/H): {track2_chars['low_ratio']:.2f}/{track2_chars['mid_ratio']:.2f}/{track2_chars['high_ratio']:.2f}")
+                
+                # Create balanced target characteristics (average of both tracks)
+                target_chars = {
+                    'low_ratio': (track1_chars['low_ratio'] + track2_chars['low_ratio']) / 2.0,
+                    'mid_ratio': (track1_chars['mid_ratio'] + track2_chars['mid_ratio']) / 2.0,
+                    'high_ratio': (track1_chars['high_ratio'] + track2_chars['high_ratio']) / 2.0,
+                }
+                print(f"  Target spectral balance (L/M/H): {target_chars['low_ratio']:.2f}/{target_chars['mid_ratio']:.2f}/{target_chars['high_ratio']:.2f}")
+                
+                # Apply EQ matching with user-specified strength
+                track1_outro_processed = self._match_eq_profile(track1_outro_normalized, target_chars, track1.sr, self.eq_strength)
+                track2_intro_processed = self._match_eq_profile(track2_intro_normalized, target_chars, track2.sr, self.eq_strength)
+            else:
+                print(f"  EQ matching disabled for transition")
+                track1_outro_processed = track1_outro_normalized
+                track2_intro_processed = track2_intro_normalized
+            
+            print(f"  Professional audio processing complete for transition regions!")
+        else:
+            print(f"  Audio quality processing disabled - using original transition regions")
+            track1_outro_processed = track1_outro
+            track2_intro_processed = track2_intro
+        
+        # 4. MICRO PEAK-TO-BEAT ALIGNMENT for perfect synchronization
+        if self.enable_peak_alignment:
+            print(f"  Applying micro peak-to-beat alignment to transition regions...")
+            
+            # Extract beat positions that fall within the transition segments
+            track1_beats_samples = librosa.frames_to_samples(track1.beats, hop_length=512)
+            track2_beats_samples = librosa.frames_to_samples(track2.beats, hop_length=512)
+            
+            # Find beats within transition regions (relative to segment start)
+            track1_end_sample = outro_start + len(track1_outro_processed)
+            track2_intro_end = intro_start + len(track2_intro_processed)
+            
+            track1_transition_beats = track1_beats_samples[
+                (track1_beats_samples >= outro_start) & 
+                (track1_beats_samples <= track1_end_sample)
+            ] - outro_start  # Make relative to segment start
+            
+            track2_transition_beats = track2_beats_samples[
+                (track2_beats_samples >= intro_start) & 
+                (track2_beats_samples <= track2_intro_end)
+            ] - intro_start  # Make relative to segment start
+            
+            # Detect and align peaks for perfect synchronization
+            if len(track1_transition_beats) > 0 and len(track2_transition_beats) > 0:
+                # Detect audio peaks in both segments
+                track1_peaks = self._detect_audio_peaks(track1_outro_processed, track1.sr)
+                track2_peaks = self._detect_audio_peaks(track2_intro_processed, track2.sr)
+                
+                # Convert beat sample positions back to frames for alignment function
+                track1_beats_frames = librosa.samples_to_frames(track1_transition_beats, hop_length=512)
+                track2_beats_frames = librosa.samples_to_frames(track2_transition_beats, hop_length=512)
+                
+                # Apply micro peak-to-beat alignment to both transition regions
+                print(f"  Track 1 outro: {len(track1_peaks)} peaks, {len(track1_beats_frames)} beats")
+                track1_outro_aligned = self._align_peaks_to_beats(
+                    track1_outro_processed, track1_peaks, track1_beats_frames, track1.sr
+                )
+                
+                print(f"  Track 2 intro: {len(track2_peaks)} peaks, {len(track2_beats_frames)} beats") 
+                track2_intro_aligned = self._align_peaks_to_beats(
+                    track2_intro_processed, track2_peaks, track2_beats_frames, track2.sr
+                )
+                
+                print(f"  Micro peak-to-beat alignment complete for transition regions!")
+            else:
+                print(f"  Warning: Insufficient beats in transition segments for peak alignment")
+                track1_outro_aligned = track1_outro_processed
+                track2_intro_aligned = track2_intro_processed
+        else:
+            print(f"  Micro peak alignment disabled for transition")
+            track1_outro_aligned = track1_outro_processed
+            track2_intro_aligned = track2_intro_processed
+        
+        return track1_outro_aligned, track2_intro_aligned
+    
+    def _create_fallback_seamless_transition(self, track1: Track, track2: Track, transition_duration: float) -> Tuple[np.ndarray, Track]:
+        """
+        Fallback seamless transition method when optimal transition points fail
+        """
+        print(f"  Using fallback seamless transition method")
+        
+        transition_samples = int(transition_duration * track1.sr)
+        
+        # Simple approach: overlap end of track1 with beginning of track2
+        track1_processed = track1.audio.copy()
+        track2_processed = track2.audio.copy()
+        
+        # Get outro and intro regions
+        track1_outro = track1_processed[-transition_samples:] if len(track1_processed) >= transition_samples else track1_processed
+        track2_intro = track2_processed[:transition_samples] if len(track2_processed) >= transition_samples else track2_processed
+        
+        # Ensure same length
+        min_length = min(len(track1_outro), len(track2_intro))
+        track1_outro = track1_outro[:min_length]
+        track2_intro = track2_intro[:min_length]
+        
+        # Create simple crossfade
+        fade_samples = min_length
+        fade_out = np.cos(np.linspace(0, np.pi/2, fade_samples))
+        fade_in = np.sin(np.linspace(0, np.pi/2, fade_samples))
+        
+        transition_section = track1_outro * fade_out + track2_intro * fade_in
+        
+        # Build complete mix
+        pre_transition = track1_processed[:-len(track1_outro)]
+        post_transition = track2_processed[len(track2_intro):]
+        
+        complete_mix = np.concatenate([pre_transition, transition_section, post_transition])
+        
+        # Updated track2
+        updated_track2 = Track(
+            filepath=track2.filepath,
+            audio=track2_processed,
+            sr=track2.sr,
+            bpm=track2.bpm,
+            key=track2.key,
+            beats=track2.beats,
+            downbeats=track2.downbeats,
+            duration=len(track2_processed) / track2.sr
+        )
+        
+        return complete_mix, updated_track2
+    
     def _create_crossfade(self, track1: Track, track2: Track, transition_duration: float) -> Tuple[np.ndarray, np.ndarray, Track]:
         """Create crossfade transition between two tempo-matched tracks
         
@@ -992,16 +1246,14 @@ class MixGenerator:
                 duration=len(mix_audio) / current_sr
             )
             
-            # Create transition (stretch_track1 is always False since prev_track is already processed)
-            transition, stretched_track = self.create_transition(prev_track, current_track, transition_duration, stretch_track1=False)
+            # Create seamless transition (maintains full track continuity)
+            complete_transition, updated_track = self.create_transition(prev_track, current_track, transition_duration, stretch_track1=False)
             
             # Update current BPM for next iteration
-            current_bpm = stretched_track.bpm
+            current_bpm = updated_track.bpm
             
-            # Remove the outro from the mix and add the transition + new track
-            transition_samples = len(transition)
-            mix_audio = mix_audio[:-transition_samples]  # Remove outro
-            mix_audio = np.concatenate([mix_audio, transition, stretched_track.audio[transition_samples:]])
+            # The complete_transition already includes the seamless blend, so replace the entire mix
+            mix_audio = complete_transition
             
             print(f"  Mix length so far: {len(mix_audio) / current_sr / 60:.1f} minutes\n")
         
@@ -1066,35 +1318,36 @@ class MixGenerator:
                 duration=current_track.duration
             )
             
-            # Generate the transition
-            transition, stretched_track = self.create_transition(prev_track, next_track, transition_duration, stretch_track1=False)
+            # Generate the seamless transition
+            complete_mix, updated_track = self.create_transition(prev_track, next_track, transition_duration, stretch_track1=False)
             
-            # Find the transition points in the original tracks
+            # Find the transition points for extraction
             track1_end_sample, track2_start_sample = self.beat_aligner.find_optimal_transition_points(
-                prev_track, stretched_track, transition_duration
+                prev_track, updated_track, transition_duration
             )
             
-            # Extract 5s buffer before transition from current track
-            pre_buffer_start = max(0, track1_end_sample - int(transition_duration * current_sr) - buffer_samples)
-            pre_buffer_end = max(0, track1_end_sample - int(transition_duration * current_sr))
-            pre_buffer = current_track.audio[pre_buffer_start:pre_buffer_end]
+            # Extract transition section from the complete seamless mix with buffers
+            transition_samples = int(transition_duration * current_sr)
             
-            # Extract 5s buffer after transition from next track
-            post_buffer_start = track2_start_sample + int(transition_duration * current_sr)
-            post_buffer_end = min(len(stretched_track.audio), post_buffer_start + buffer_samples)
-            post_buffer = stretched_track.audio[post_buffer_start:post_buffer_end]
+            # Calculate positions in the complete mix
+            # The complete mix structure: [track1_beginning] [transition_region] [track2_end]
+            track1_length = len(prev_track.audio)
+            transition_start_in_mix = max(0, track1_end_sample - transition_samples)
+            transition_end_in_mix = transition_start_in_mix + transition_samples
             
-            # Combine: pre-buffer + transition + post-buffer
-            if len(pre_buffer) > 0 and len(transition) > 0 and len(post_buffer) > 0:
-                transition_segment = np.concatenate([pre_buffer, transition, post_buffer])
+            # Extract with 5s buffers
+            extract_start = max(0, transition_start_in_mix - buffer_samples)
+            extract_end = min(len(complete_mix), transition_end_in_mix + buffer_samples)
+            
+            transition_segment = complete_mix[extract_start:extract_end]
+            
+            if len(transition_segment) > 0:
                 all_transitions.append(transition_segment)
                 
                 segment_duration = len(transition_segment) / current_sr
-                print(f"  Transition segment: {segment_duration:.1f}s (5s + {transition_duration}s + 5s)")
+                print(f"  Transition segment: {segment_duration:.1f}s (seamless with 5s buffers)")
             else:
-                print(f"  Warning: Could not create full transition segment")
-                if len(transition) > 0:
-                    all_transitions.append(transition)
+                print(f"  Warning: Could not extract transition segment")
         
         if not all_transitions:
             raise ValueError("No transitions could be generated")
