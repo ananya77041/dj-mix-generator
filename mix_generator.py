@@ -1051,7 +1051,26 @@ class MixGenerator:
         
         print(f"  Enhanced crossfade complete with professional quality processing!")
         
-        return transition, track2.audio, track2
+        # Store the actual segment lengths for proper mix accumulation
+        track2_with_boundaries = Track(
+            filepath=track2.filepath,
+            audio=track2.audio,
+            sr=track2.sr,
+            bpm=track2.bpm,
+            key=track2.key,
+            beats=track2.beats,
+            downbeats=track2.downbeats,
+            duration=track2.duration
+        )
+        
+        # Attach the actual segment lengths used in the transition
+        outro_start = max(0, track1_end_sample - len(track1_outro_enhanced))
+        intro_end = track2_start_sample + len(track2_intro_enhanced)
+        
+        track2_with_boundaries.actual_outro_length = len(track1_outro_enhanced)
+        track2_with_boundaries.actual_intro_end = intro_end
+        
+        return transition, track2.audio, track2_with_boundaries
     
     def _create_crossfade(self, track1: Track, track2: Track, transition_duration: float) -> Tuple[np.ndarray, np.ndarray, Track]:
         """Create crossfade transition between two tempo-matched tracks
@@ -1314,16 +1333,18 @@ class MixGenerator:
             # Update current BPM for next iteration
             current_bpm = stretched_track.bpm
             
-            # SIMPLIFIED CORRECT APPROACH: Use the transition length to determine boundaries
-            # The transition was created with specific lengths, so we can use those directly
+            # PRECISE APPROACH: Use the actual segment lengths from the beat aligner
+            # This ensures transitions end exactly when the new track body should begin
             
-            transition_samples = len(transition)
+            # Get the actual segment lengths used in the transition
+            actual_outro_length = getattr(stretched_track, 'actual_outro_length', len(transition))
+            actual_intro_end = getattr(stretched_track, 'actual_intro_end', len(transition))
             
-            # The outro segment to replace is exactly transition_samples long at the end of mix_audio
-            mix_before_transition = mix_audio[:-transition_samples]
+            # The outro segment to replace is exactly actual_outro_length long at the end of mix_audio
+            mix_before_transition = mix_audio[:-actual_outro_length]
             
-            # The intro segment in track2_audio is exactly transition_samples long at the beginning
-            track2_after_intro = track2_audio[transition_samples:]
+            # The intro segment in track2_audio ends at actual_intro_end
+            track2_after_intro = track2_audio[actual_intro_end:]
             
             # Build the new accumulated mix:
             # 1. All previous accumulated mix except the outro that gets replaced
@@ -1335,11 +1356,13 @@ class MixGenerator:
                 track2_after_intro      # Remaining track2
             ])
             
-            print(f"  Accumulating Track {i+1}:")
-            print(f"    Previous accumulated mix (minus outro): {len(mix_before_transition)} samples")
-            print(f"    Enhanced transition: {len(transition)} samples")
-            print(f"    Track{i+1} remaining: {len(track2_after_intro)} samples")
-            print(f"    New total accumulated mix: {len(mix_audio)} samples")
+            print(f"  Precise Track {i+1} accumulation:")
+            print(f"    Outro length used: {actual_outro_length} samples ({actual_outro_length/current_sr:.2f}s)")
+            print(f"    Previous mix (minus outro): {len(mix_before_transition)} samples")
+            print(f"    Enhanced transition: {len(transition)} samples ({len(transition)/current_sr:.2f}s)")
+            print(f"    Track{i+1} intro end: sample {actual_intro_end} ({actual_intro_end/current_sr:.2f}s)")
+            print(f"    Track{i+1} remaining: {len(track2_after_intro)} samples ({len(track2_after_intro)/current_sr:.2f}s)")
+            print(f"    New total mix: {len(mix_audio)} samples ({len(mix_audio)/current_sr:.2f}s)")
             
             print(f"  Mix length so far: {len(mix_audio) / current_sr / 60:.1f} minutes\n")
         
