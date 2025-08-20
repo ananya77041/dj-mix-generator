@@ -1316,28 +1316,50 @@ class MixGenerator:
             # Update current BPM for next iteration
             current_bpm = stretched_track.bpm
             
-            # SIMPLE AND CORRECT APPROACH: Just remove transition_samples from end and add transition + remaining track
-            # This maintains all accumulated tracks and adds the new transition properly
+            # CORRECT APPROACH: Get actual transition boundaries from beat aligner to ensure no sample loss
+            # The beat aligner determines the exact outro and intro boundaries based on downbeats
             
+            # Get the actual transition points used by the beat aligner
+            track1_end_sample, track2_start_sample = self.beat_aligner.find_optimal_transition_points(
+                prev_track, stretched_track, transition_duration
+            )
+            
+            # Calculate actual outro start position in prev_track 
             transition_samples = len(transition)
+            outro_start_in_prev_track = max(0, track1_end_sample - transition_samples)
             
-            # Remove the outro segment from the accumulated mix (this is exactly transition_samples long)
-            mix_without_outro = mix_audio[:-transition_samples]
+            # Calculate the outro start position in the accumulated mix
+            # The outro starts at outro_start_in_prev_track within prev_track,
+            # but we need to find where that maps to in the accumulated mix_audio
+            outro_length_in_prev_track = track1_end_sample - outro_start_in_prev_track
+            outro_start_in_mix = len(mix_audio) - outro_length_in_prev_track
+            outro_start_in_mix = max(0, outro_start_in_mix)
             
-            # Add the enhanced transition 
-            mix_with_transition = np.concatenate([mix_without_outro, transition])
+            # Calculate where track2 intro ends (for remaining track2 audio)
+            intro_end_in_track2 = track2_start_sample + transition_samples
             
-            # Add the remaining track2 audio (after the intro segment)
-            track2_remaining = track2_audio[transition_samples:]
+            # Build mix with perfect sample continuity:
+            # Part 1: All accumulated mix before the outro segment
+            mix_before_outro = mix_audio[:outro_start_in_mix]
             
-            # Final mix includes all previous tracks + enhanced transition + remaining track2  
-            mix_audio = np.concatenate([mix_with_transition, track2_remaining])
+            # Part 2: The enhanced transition (replaces the outro segment)
+            enhanced_transition = transition
             
-            print(f"  Sample continuity:")
-            print(f"    Previous mix without outro: {len(mix_without_outro)} samples")
-            print(f"    Enhanced transition: {len(transition)} samples") 
-            print(f"    Track2 remaining: {len(track2_remaining)} samples")
-            print(f"    Total accumulated mix: {len(mix_audio)} samples")
+            # Part 3: Track2 audio after the intro segment
+            track2_after_intro = track2_audio[intro_end_in_track2:]
+            
+            # Combine all parts with no sample loss
+            mix_audio = np.concatenate([
+                mix_before_outro,
+                enhanced_transition,
+                track2_after_intro
+            ])
+            
+            print(f"  Perfect sample continuity:")
+            print(f"    Mix before outro ({outro_start_in_mix} samples): {len(mix_before_outro)} samples")
+            print(f"    Enhanced transition: {len(enhanced_transition)} samples")
+            print(f"    Track2 remaining (from sample {intro_end_in_track2}): {len(track2_after_intro)} samples")
+            print(f"    Total mix: {len(mix_audio)} samples")
             
             print(f"  Mix length so far: {len(mix_audio) / current_sr / 60:.1f} minutes\n")
         
