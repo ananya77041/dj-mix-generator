@@ -233,7 +233,14 @@ class BeatAligner:
             from beatgrid_gui import align_beatgrids_interactive
             
             print("  Opening interactive beatgrid alignment...")
-            print("  Note: Tracks are already tempo-matched for optimal user experience")
+            print(f"  Track 1 BPM: {track1.bpm:.1f}")
+            print(f"  Track 2 BPM: {track2.bpm:.1f}")
+            bpm_diff = abs(track1.bpm - track2.bpm)
+            if bpm_diff < 0.1:
+                print("  ✓ Tracks are tempo-matched for optimal user experience")
+            else:
+                print(f"  ⚠ Warning: Tracks have different tempos (diff: {bpm_diff:.1f} BPM)")
+                print("  This should not happen - tracks should be tempo-matched before interactive alignment")
             
             # Get user's alignment offset
             offset = align_beatgrids_interactive(

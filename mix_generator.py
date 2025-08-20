@@ -78,6 +78,12 @@ class MixGenerator:
                 
             track2_stretched = self._stretch_track_to_bpm(track2, self.target_bpm)
         
+        # Debug: verify BPMs match before passing to crossfade
+        print(f"  Final BPMs before crossfade: Track1={track1_stretched.bpm:.1f}, Track2={track2_stretched.bpm:.1f}")
+        bpm_diff = abs(track1_stretched.bpm - track2_stretched.bpm)
+        if bpm_diff > 0.1:
+            print(f"  ⚠ Warning: Tempo mismatch detected ({bpm_diff:.1f} BPM difference)")
+        
         return self._create_crossfade(track1_stretched, track2_stretched, transition_duration)
     
     def _stretch_track_to_bpm(self, track: Track, target_bpm: float) -> Track:

@@ -159,7 +159,9 @@ class BeatgridAligner:
         beats_relative_time = beats_in_window - window_start
         
         # Convert time to measures (assuming 4/4 time)
-        beats_per_second = self.track1.bpm / 60.0
+        # Use an average BPM if tracks differ slightly, or track1 BPM if they should be matched
+        avg_bpm = (self.track1.bpm + self.track2.bpm) / 2.0
+        beats_per_second = avg_bpm / 60.0
         beats_per_measure = self.beats_per_measure
         measures_per_second = beats_per_second / beats_per_measure
         
@@ -358,7 +360,8 @@ class BeatgridAligner:
                     distances = np.abs(valid_t2_beats - t1_beat)
                     min_distance = np.min(distances)
                     # Convert measure distance to time distance for ms calculation
-                    beats_per_second = self.track1.bpm / 60.0
+                    avg_bpm = (self.track1.bpm + self.track2.bpm) / 2.0
+                    beats_per_second = avg_bpm / 60.0
                     measures_per_second = beats_per_second / self.beats_per_measure
                     time_distance = min_distance / measures_per_second
                     total_offset += time_distance * 1000  # Convert to ms
@@ -438,7 +441,8 @@ class BeatgridAligner:
         mouse_delta_measures = event.xdata - self.drag_start_x
         
         # Convert measure delta to time delta
-        beats_per_second = self.track1.bpm / 60.0
+        avg_bpm = (self.track1.bpm + self.track2.bpm) / 2.0
+        beats_per_second = avg_bpm / 60.0
         measures_per_second = beats_per_second / self.beats_per_measure
         mouse_delta_time = mouse_delta_measures / measures_per_second
         
