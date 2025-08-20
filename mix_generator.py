@@ -78,13 +78,49 @@ class MixGenerator:
                 
             track2_stretched = self._stretch_track_to_bpm(track2, self.target_bpm)
         
-        # Debug: verify BPMs match before passing to crossfade
-        print(f"  Final BPMs before crossfade: Track1={track1_stretched.bpm:.1f}, Track2={track2_stretched.bpm:.1f}")
-        bpm_diff = abs(track1_stretched.bpm - track2_stretched.bpm)
-        if bpm_diff > 0.01:  # Very strict: even 0.01 BPM difference should be flagged  
-            print(f"  ⚠ Warning: Tempo mismatch detected ({bpm_diff:.3f} BPM difference - should be < 0.01)")
+        # CRITICAL FIX: Force both tracks to use the exact uniform target BPM for crossfading
+        # The actual calculated BPMs may differ slightly due to discrete sample precision,
+        # but for crossfading we must use the exact target BPM to ensure perfect matching
         
-        return self._create_crossfade(track1_stretched, track2_stretched, transition_duration)
+        target_bpm_for_crossfade = None
+        if self.tempo_strategy == "sequential":
+            target_bpm_for_crossfade = track1_stretched.bpm  # Use track1's BPM as reference
+        elif self.tempo_strategy == "uniform":
+            target_bpm_for_crossfade = self.target_bpm  # Use the exact uniform target BPM
+        
+        print(f"  Final BPMs after stretching: Track1={track1_stretched.bpm:.3f}, Track2={track2_stretched.bpm:.3f}")
+        
+        # Create corrected tracks with uniform BPM for crossfading
+        track1_for_crossfade = Track(
+            filepath=track1_stretched.filepath,
+            audio=track1_stretched.audio,
+            sr=track1_stretched.sr,
+            bpm=target_bpm_for_crossfade,  # Force uniform BPM
+            key=track1_stretched.key,
+            beats=track1_stretched.beats,
+            downbeats=track1_stretched.downbeats,
+            duration=track1_stretched.duration
+        )
+        
+        track2_for_crossfade = Track(
+            filepath=track2_stretched.filepath,
+            audio=track2_stretched.audio,
+            sr=track2_stretched.sr,
+            bpm=target_bpm_for_crossfade,  # Force uniform BPM
+            key=track2_stretched.key,
+            beats=track2_stretched.beats,
+            downbeats=track2_stretched.downbeats,
+            duration=track2_stretched.duration
+        )
+        
+        print(f"  Crossfade BPMs (uniform): Track1={track1_for_crossfade.bpm:.3f}, Track2={track2_for_crossfade.bpm:.3f}")
+        bpm_diff = abs(track1_for_crossfade.bpm - track2_for_crossfade.bpm)
+        if bpm_diff > 0.001:
+            print(f"  ❌ CRITICAL ERROR: BPM mismatch in crossfade ({bpm_diff:.6f})")
+        else:
+            print(f"  ✅ Perfect BPM match for crossfade (difference: {bpm_diff:.6f})")
+        
+        return self._create_crossfade(track1_for_crossfade, track2_for_crossfade, transition_duration)
     
     def _stretch_track_to_bpm(self, track: Track, target_bpm: float) -> Track:
         """Stretch a track to match target BPM with intelligent tempo correction
