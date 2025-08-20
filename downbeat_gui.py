@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """
 Visual interface for manual downbeat selection
-Displays waveform of first 10 seconds and allows user to click on first downbeat
+Displays waveform of first 5 seconds and allows user to click on first downbeat
 """
 
 import numpy as np
@@ -31,8 +31,8 @@ class DownbeatSelector:
         self.calculated_bpm = detected_bpm
         self.callback_func = None
         
-        # Only show first 10 seconds
-        self.display_duration = 10.0
+        # Only show first 5 seconds
+        self.display_duration = 5.0
         self.display_samples = int(self.display_duration * sr)
         self.audio_segment = audio[:self.display_samples] if len(audio) > self.display_samples else audio
         
@@ -56,7 +56,7 @@ class DownbeatSelector:
         
         # Plot waveform
         self.ax_wave.plot(self.time_axis, self.audio_segment, color='steelblue', alpha=0.8, linewidth=0.5)
-        self.ax_wave.set_title(f'Select Downbeats & BPM - {self.track_name}', fontsize=14, fontweight='bold')
+        self.ax_wave.set_title(f'Select Downbeats & BPM - {self.track_name} (5 seconds)', fontsize=14, fontweight='bold')
         self.ax_wave.set_xlabel('Time (seconds)', fontsize=12)
         self.ax_wave.set_ylabel('Amplitude', fontsize=12)
         self.ax_wave.grid(True, alpha=0.3)
@@ -74,7 +74,7 @@ class DownbeatSelector:
         tempo_mode = "irregular" if self.allow_irregular_tempo else "whole numbers"
         instruction_text = (
             f"Instructions (BPM will be quantized to {tempo_mode}):\n"
-            f"• Detected BPM: {self.detected_bpm:.1f}\n"
+            f"• Detected BPM: {self.detected_bpm:.1f} - Showing first 5 seconds\n"
             "• Orange dashed lines show detected beats\n"
             "• Step 1: Click on the first downbeat (red line)\n"
             "• Step 2: Click on a later downbeat to set BPM (green line)\n"
@@ -205,8 +205,8 @@ class DownbeatSelector:
             self.first_downbeat_line = self.ax_wave.axvline(
                 x=self.first_downbeat, 
                 color='red', 
-                linewidth=3, 
-                alpha=0.8,
+                linewidth=1, 
+                alpha=0.9,
                 label='First downbeat'
             )
         
@@ -215,8 +215,8 @@ class DownbeatSelector:
             self.second_downbeat_line = self.ax_wave.axvline(
                 x=self.second_downbeat, 
                 color='green', 
-                linewidth=3, 
-                alpha=0.8,
+                linewidth=1, 
+                alpha=0.9,
                 label='Second downbeat'
             )
         
