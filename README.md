@@ -1,0 +1,147 @@
+# DJ Mix Generator
+
+A simple Python tool to create continuous DJ mixes from WAV files. The program analyzes your tracks for BPM and key information, then creates seamless transitions between them.
+
+## Features
+
+- **Automatic BPM detection** using librosa's beat tracking
+- **Musical key estimation** with chromagram analysis
+- **Beat matching** via time-stretching to align tempos
+- **Smooth crossfade transitions** with equal-power curves
+- **Audio normalization** to prevent clipping
+- **Support for different sample rates** with automatic resampling
+
+## Installation
+
+1. Make sure you have Python 3.7+ installed
+2. Install dependencies:
+
+```bash
+cd /Users/andy.mishra/workspace/dj-mix-generator
+pip install -r requirements.txt
+```
+
+Note: Installing librosa may take a few minutes as it has several dependencies including scipy and scikit-learn.
+
+## Usage
+
+### Basic Usage
+
+```bash
+python dj_mix_generator.py track1.wav track2.wav track3.wav
+```
+
+This will:
+1. Analyze each track for BPM and key
+2. Create seamless 8-second crossfade transitions
+3. Output a file called `dj_mix.wav`
+
+### Example Output
+
+```
+Loading playlist with 3 tracks...
+
+Analyzing: track1.wav
+  [1/3] BPM: 128.0, Key: G major, Duration: 180.5s
+
+Analyzing: track2.wav
+  [2/3] BPM: 132.1, Key: A minor, Duration: 210.2s
+
+Analyzing: track3.wav
+  [3/3] BPM: 126.8, Key: F major, Duration: 195.7s
+
+Successfully loaded 3 tracks.
+
+Generating mix with 3 tracks...
+Transition duration: 8.0s
+
+Track 1: track1.wav
+Track 2: track2.wav
+  BPM adjustment: 128.0 -> 132.1
+  Time-stretching track2 by ratio: 1.032
+  Mix length so far: 6.2 minutes
+
+Track 3: track3.wav
+  BPM adjustment: 132.1 -> 126.8
+  Time-stretching track3 by ratio: 0.960
+  Mix length so far: 9.4 minutes
+
+Saving mix to: dj_mix.wav
+
+Mix complete! 🎵
+Duration: 9.4 minutes
+Sample rate: 44100 Hz
+File size: 82.3 MB
+```
+
+## How It Works
+
+1. **Track Analysis**: Each WAV file is analyzed using librosa to extract:
+   - BPM (beats per minute) using onset detection
+   - Musical key using chromagram analysis
+   - Beat positions for precise alignment
+
+2. **Beat Matching**: When transitioning between tracks:
+   - Time-stretches the incoming track to match the current tempo
+   - Preserves pitch while adjusting speed
+
+3. **Crossfading**: Creates smooth transitions using:
+   - Equal-power crossfade curves (cosine/sine)
+   - 8-second default transition duration
+   - Aligned beat positions for seamless mixing
+
+4. **Audio Processing**: 
+   - Handles different sample rates via resampling
+   - Normalizes final output to prevent clipping
+   - Maintains audio quality throughout the process
+
+## Limitations
+
+This is a basic implementation with some limitations:
+
+- **Simple key detection**: Uses basic chromagram analysis (not as accurate as professional tools)
+- **No harmonic mixing**: Doesn't consider key compatibility for transitions
+- **Fixed crossfade**: Uses simple linear crossfades (no EQ matching or advanced techniques)
+- **Beat alignment**: Basic tempo matching without precise beat alignment
+- **WAV only**: Currently only supports WAV files
+
+## Next Steps for Enhancement
+
+- Better key detection algorithms (Krumhansl-Schmuckler, etc.)
+- Harmonic mixing with compatible key transitions
+- Automatic cue point detection for optimal transition timing
+- EQ matching between tracks
+- Support for MP3 and other audio formats
+- GUI interface for easier use
+- Advanced time-stretching with pyrubberband
+
+## Troubleshooting
+
+**"ModuleNotFoundError: No module named 'librosa'"**
+- Install dependencies: `pip install -r requirements.txt`
+
+**"Error analyzing track.wav: Input file is empty"**
+- Make sure your WAV files are valid and not corrupted
+- Try converting the file with a tool like ffmpeg if needed
+
+**"No valid tracks loaded!"**
+- Check that your file paths are correct
+- Ensure WAV files are readable and in a supported format
+
+**Very long processing time**
+- Large audio files take time to analyze
+- Consider using shorter clips for testing
+- BPM detection is the most time-consuming step
+
+## Example Test
+
+To test with your own tracks:
+
+```bash
+# Put your WAV files in the project directory
+python dj_mix_generator.py your_track1.wav your_track2.wav your_track3.wav
+
+# The output will be saved as dj_mix.wav
+```
+
+Enjoy your automated DJ mixes! 🎧
