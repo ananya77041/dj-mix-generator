@@ -1051,26 +1051,7 @@ class MixGenerator:
         
         print(f"  Enhanced crossfade complete with professional quality processing!")
         
-        # Store the actual segment lengths for proper mix accumulation
-        track2_with_boundaries = Track(
-            filepath=track2.filepath,
-            audio=track2.audio,
-            sr=track2.sr,
-            bpm=track2.bpm,
-            key=track2.key,
-            beats=track2.beats,
-            downbeats=track2.downbeats,
-            duration=track2.duration
-        )
-        
-        # Attach the actual segment lengths used in the transition
-        outro_start = max(0, track1_end_sample - len(track1_outro_enhanced))
-        intro_end = track2_start_sample + len(track2_intro_enhanced)
-        
-        track2_with_boundaries.actual_outro_length = len(track1_outro_enhanced)
-        track2_with_boundaries.actual_intro_end = intro_end
-        
-        return transition, track2.audio, track2_with_boundaries
+        return transition, track2.audio, track2
     
     def _create_crossfade(self, track1: Track, track2: Track, transition_duration: float) -> Tuple[np.ndarray, np.ndarray, Track]:
         """Create crossfade transition between two tempo-matched tracks
@@ -1333,37 +1314,29 @@ class MixGenerator:
             # Update current BPM for next iteration
             current_bpm = stretched_track.bpm
             
-            # WORKING APPROACH: Use transition length consistently 
-            # The enhanced crossfade creates segments of specific lengths that we can use directly
+            # SIMPLE AND RELIABLE APPROACH: Just add transition + new track to accumulated mix
+            # Don't try to replace segments, just accumulate everything
             
+            # Remove exactly the outro portion that was used in the transition from the end
             transition_samples = len(transition)
+            mix_before_outro = mix_audio[:-transition_samples]
             
-            # Get the actual intro end from the enhanced crossfade if available
-            actual_intro_end = getattr(stretched_track, 'actual_intro_end', transition_samples)
+            # Add the new transition and the remaining track
+            track2_remaining = track2_audio[transition_samples:]  # Skip the intro that was used in transition
             
-            # Remove the outro segment from the accumulated mix (transition_samples long)
-            # This preserves all previously accumulated tracks
-            mix_before_transition = mix_audio[:-transition_samples]
-            
-            # The intro segment in track2_audio ends at actual_intro_end
-            track2_after_intro = track2_audio[actual_intro_end:]
-            
-            # Build the new accumulated mix:
-            # 1. All previous accumulated mix except the outro that gets replaced
-            # 2. The enhanced transition (which replaces the outro)
-            # 3. The full remaining track2 (after the intro that was used in transition)
+            # Build the final mix: all previous + transition + remaining new track
             mix_audio = np.concatenate([
-                mix_before_transition,  # All accumulated mix except outro
-                transition,             # Enhanced crossfade 
-                track2_after_intro      # Remaining track2
+                mix_before_outro,    # All previous accumulated content minus outro
+                transition,          # The enhanced transition
+                track2_remaining     # The remaining part of the new track
             ])
             
-            print(f"  Track {i+1} accumulation:")
-            print(f"    Previous mix (minus {transition_samples} outro samples): {len(mix_before_transition)} samples")
-            print(f"    Enhanced transition: {len(transition)} samples ({len(transition)/current_sr:.2f}s)")
-            print(f"    Track{i+1} intro ends at sample {actual_intro_end} ({actual_intro_end/current_sr:.2f}s)")
-            print(f"    Track{i+1} remaining: {len(track2_after_intro)} samples ({len(track2_after_intro)/current_sr:.2f}s)")
-            print(f"    New total mix: {len(mix_audio)} samples ({len(mix_audio)/current_sr/60:.2f}min)")
+            print(f"  Simple accumulation for Track {i+1}:")
+            print(f"    Previous mix before outro: {len(mix_before_outro)} samples")
+            print(f"    Transition: {len(transition)} samples")
+            print(f"    Track {i+1} remaining: {len(track2_remaining)} samples") 
+            print(f"    Total accumulated: {len(mix_audio)} samples ({len(mix_audio)/current_sr/60:.1f} min)")
+            print(f"    Expected: All previous tracks + transition{i} + track{i+1}")
             
             print(f"  Mix length so far: {len(mix_audio) / current_sr / 60:.1f} minutes\n")
         
