@@ -27,7 +27,11 @@ def create_test_track(filename, duration_seconds=30, bpm=120, sr=44100):
     hihat_wave = np.random.normal(0, 0.1, hihat_samples) * np.exp(-np.linspace(0, 10, hihat_samples))
     
     # Add a different bass tone for each track to distinguish them
-    track_num = int(filename.split('_')[1].split('.')[0])  # Extract track number
+    filename_str = str(filename)
+    if 'track_' in filename_str:
+        track_num = int(filename_str.split('track_')[1].split('.')[0])  # Extract track number
+    else:
+        track_num = 1  # Default fallback
     bass_freq = 80 + (track_num - 1) * 20  # Different bass frequencies
     
     for beat in range(0, total_samples, samples_per_beat):
