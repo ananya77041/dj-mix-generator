@@ -1314,23 +1314,37 @@ class MixGenerator:
             # Update current BPM for next iteration
             current_bpm = stretched_track.bpm
             
-            # CORRECT SIMPLE STEPS:
-            # 1. Take the accumulated mix so far
-            # 2. Add the transition 
-            # 3. Add the full new track
+            # EXACT STEP-BY-STEP PROCESS:
+            # 1. Calculate and store length of first track (current accumulated mix)
+            first_track_length = len(mix_audio)
             
-            # Just concatenate: existing mix + transition + full new track
+            # 2. Calculate and store length of transition
+            transition_length = len(transition)
+            
+            # 3. Calculate and store length of second track
+            second_track_length = len(track2_audio)
+            
+            # 4. Remove length of transition from end of first track and store snippet
+            first_track_snippet = mix_audio[:-transition_length]
+            
+            # 5. Remove length of transition from beginning of second track and store snippet  
+            second_track_snippet = track2_audio[transition_length:]
+            
+            # 6. Concatenate snippet of first track, transition, and snippet of second track
             mix_audio = np.concatenate([
-                mix_audio,      # All accumulated mix so far
-                transition,     # The transition between last and new track
-                track2_audio    # The FULL new track
+                first_track_snippet,  # First track minus outro
+                transition,           # The transition
+                second_track_snippet  # Second track minus intro
             ])
             
-            print(f"  Track {i+1} accumulation:")
-            print(f"    Previous accumulated mix: {len(mix_audio) - len(transition) - len(track2_audio)} samples")
-            print(f"    Transition: {len(transition)} samples")
-            print(f"    Full Track {i+1}: {len(track2_audio)} samples")
-            print(f"    New total: {len(mix_audio)} samples ({len(mix_audio)/current_sr/60:.1f} min)")
+            print(f"  Track {i+1} mixing process:")
+            print(f"    1. First track length: {first_track_length} samples ({first_track_length/current_sr:.1f}s)")
+            print(f"    2. Transition length: {transition_length} samples ({transition_length/current_sr:.1f}s)")
+            print(f"    3. Second track length: {second_track_length} samples ({second_track_length/current_sr:.1f}s)")
+            print(f"    4. First track snippet: {len(first_track_snippet)} samples")
+            print(f"    5. Second track snippet: {len(second_track_snippet)} samples")
+            print(f"    6. Final mix: {len(mix_audio)} samples ({len(mix_audio)/current_sr/60:.1f} min)")
+            print(f"       = {len(first_track_snippet)} + {transition_length} + {len(second_track_snippet)}")
             
             print(f"  Mix length so far: {len(mix_audio) / current_sr / 60:.1f} minutes\n")
         
