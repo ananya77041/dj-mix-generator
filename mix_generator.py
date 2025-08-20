@@ -1043,10 +1043,6 @@ class MixGenerator:
         # Apply crossfade with enhanced audio
         transition = track1_outro_enhanced * fade_out + track2_intro_enhanced * fade_in
         
-        # Store transition boundary information for perfect sample continuity
-        outro_start = max(0, track1_end_sample - len(track1_outro_enhanced))
-        intro_end = track2_start_sample + len(track2_intro_enhanced)
-        
         # Final output normalization to prevent clipping
         final_peak = np.max(np.abs(transition))
         if final_peak > 0.95:
@@ -1055,24 +1051,7 @@ class MixGenerator:
         
         print(f"  Enhanced crossfade complete with professional quality processing!")
         
-        # Return transition, track2_audio, and track2 with boundary info attached
-        track2_with_boundaries = Track(
-            filepath=track2.filepath,
-            audio=track2.audio,
-            sr=track2.sr,
-            bpm=track2.bpm,
-            key=track2.key,
-            beats=track2.beats,
-            downbeats=track2.downbeats,
-            duration=track2.duration
-        )
-        
-        # Attach boundary information for sample continuity
-        track2_with_boundaries.outro_start = outro_start
-        track2_with_boundaries.intro_end = intro_end
-        track2_with_boundaries.transition_samples = len(transition)
-        
-        return transition, track2.audio, track2_with_boundaries
+        return transition, track2.audio, track2
     
     def _create_crossfade(self, track1: Track, track2: Track, transition_duration: float) -> Tuple[np.ndarray, np.ndarray, Track]:
         """Create crossfade transition between two tempo-matched tracks
@@ -1337,52 +1316,28 @@ class MixGenerator:
             # Update current BPM for next iteration
             current_bpm = stretched_track.bpm
             
-            # CRITICAL FIX: Perfect sample continuity based on actual transition boundaries  
-            # The enhanced crossfade returns boundary info relative to individual tracks,
-            # but we need to work with the accumulated mix_audio
+            # SIMPLE AND CORRECT APPROACH: Just remove transition_samples from end and add transition + remaining track
+            # This maintains all accumulated tracks and adds the new transition properly
             
-            # Get the transition boundary information from the enhanced crossfade
-            outro_start_in_track = getattr(stretched_track, 'outro_start', None)
-            intro_end_in_track = getattr(stretched_track, 'intro_end', None)
             transition_samples = len(transition)
             
-            if outro_start_in_track is not None and intro_end_in_track is not None:
-                # Calculate how much of the current mix_audio needs to be replaced
-                # The outro processing started at outro_start_in_track within prev_track,
-                # so we need to keep everything in mix_audio up to that point
-                outro_start_in_mix = len(mix_audio) - (len(prev_track.audio) - outro_start_in_track)
-                outro_start_in_mix = max(0, outro_start_in_mix)  # Ensure non-negative
-                
-                # Build the new mix with perfect sample continuity:
-                # Part 1: Mix up to where outro processing began  
-                mix_before_outro = mix_audio[:outro_start_in_mix]
-                
-                # Part 2: The crossfaded transition segment
-                transition_segment = transition
-                
-                # Part 3: Track2 after intro processing ended
-                track2_after_intro = track2_audio[intro_end_in_track:]
-                
-                # Combine all parts
-                mix_audio = np.concatenate([
-                    mix_before_outro,
-                    transition_segment,
-                    track2_after_intro
-                ])
-                
-                print(f"  Perfect sample continuity:")
-                print(f"    Mix before outro: {len(mix_before_outro)} samples")
-                print(f"    Transition: {len(transition_segment)} samples") 
-                print(f"    Track2 remaining: {len(track2_after_intro)} samples")
-                print(f"    Total: {len(mix_audio)} samples")
-                
-            else:
-                # Fallback method - assume outro length matches transition length
-                print("  Warning: Using fallback sample continuity method")
-                outro_samples_to_remove = transition_samples
-                mix_audio = mix_audio[:-outro_samples_to_remove]
-                mix_audio = np.concatenate([mix_audio, transition, track2_audio[transition_samples:]])
-                print(f"  Fallback: removed {outro_samples_to_remove}, added {len(transition)} + {len(track2_audio[transition_samples:])}")
+            # Remove the outro segment from the accumulated mix (this is exactly transition_samples long)
+            mix_without_outro = mix_audio[:-transition_samples]
+            
+            # Add the enhanced transition 
+            mix_with_transition = np.concatenate([mix_without_outro, transition])
+            
+            # Add the remaining track2 audio (after the intro segment)
+            track2_remaining = track2_audio[transition_samples:]
+            
+            # Final mix includes all previous tracks + enhanced transition + remaining track2  
+            mix_audio = np.concatenate([mix_with_transition, track2_remaining])
+            
+            print(f"  Sample continuity:")
+            print(f"    Previous mix without outro: {len(mix_without_outro)} samples")
+            print(f"    Enhanced transition: {len(transition)} samples") 
+            print(f"    Track2 remaining: {len(track2_remaining)} samples")
+            print(f"    Total accumulated mix: {len(mix_audio)} samples")
             
             print(f"  Mix length so far: {len(mix_audio) / current_sr / 60:.1f} minutes\n")
         
