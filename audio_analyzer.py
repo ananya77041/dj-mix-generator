@@ -15,9 +15,10 @@ from track_cache import TrackCache
 class AudioAnalyzer:
     """Handles audio analysis for BPM, key detection, and beat tracking"""
     
-    def __init__(self, use_cache: bool = True):
+    def __init__(self, use_cache: bool = True, manual_downbeats: bool = False):
         self.key_names = ['C', 'C#', 'D', 'D#', 'E', 'F', 'F#', 'G', 'G#', 'A', 'A#', 'B']
         self.use_cache = use_cache
+        self.manual_downbeats = manual_downbeats
         self.cache = TrackCache() if use_cache else None
         
     def analyze_track(self, filepath: str) -> Track:
@@ -26,9 +27,10 @@ class AudioAnalyzer:
         
         # Check cache first
         if self.use_cache and self.cache:
-            cached_track = self.cache.get_cached_analysis(filepath)
+            cached_track = self.cache.get_cached_analysis(filepath, self.manual_downbeats)
             if cached_track is not None:
-                print(f"  ✓ Loaded from cache")
+                cache_type = "manual" if self.manual_downbeats else "automatic"
+                print(f"  ✓ Loaded from cache ({cache_type} downbeats)")
                 return cached_track
         
         try:
@@ -43,7 +45,10 @@ class AudioAnalyzer:
             bpm = float(tempo)
             
             # Downbeat detection (stronger beats that mark musical measures)
-            downbeats = self._detect_downbeats(audio, sr, beats, bpm)
+            if self.manual_downbeats:
+                downbeats = self._get_manual_downbeats(audio, sr, beats, os.path.basename(filepath))
+            else:
+                downbeats = self._detect_downbeats(audio, sr, beats, bpm)
             
             # Key detection (simplified chromagram approach)
             chroma = librosa.feature.chroma_stft(y=audio, sr=sr)
@@ -62,7 +67,7 @@ class AudioAnalyzer:
             
             # Cache the results
             if self.use_cache and self.cache:
-                self.cache.cache_analysis(track)
+                self.cache.cache_analysis(track, self.manual_downbeats)
             
             return track
             
@@ -272,3 +277,58 @@ class AudioAnalyzer:
                 return beats[::4]  # Every 4th beat as downbeat
             else:
                 return np.array([beats[0]]) if len(beats) > 0 else np.array([])
+    
+    def _get_manual_downbeats(self, audio: np.ndarray, sr: int, beats: np.ndarray, track_name: str) -> np.ndarray:
+        """
+        Get downbeats through manual selection via GUI
+        """
+        try:
+            from downbeat_gui import select_first_downbeat
+            
+            # Show GUI for manual selection
+            result = select_first_downbeat(audio, sr, track_name, beats)
+            
+            if result == 'cancel':
+                print("  Manual selection cancelled, using automatic detection")
+                return self._detect_downbeats(audio, sr, beats, 0)  # Fallback to auto
+            elif result is None:
+                print("  Using automatic detection as requested")
+                return self._detect_downbeats(audio, sr, beats, 0)  # Use auto detection
+            else:
+                print(f"  Manual downbeat selected at: {result:.3f}s")
+                
+                # Convert the selected time to downbeat pattern
+                first_downbeat_frame = librosa.time_to_frames(result, sr=sr, hop_length=512)
+                
+                # Generate regular downbeats from this starting point
+                beats_per_measure = 4
+                downbeat_indices = []
+                
+                # Find the beat index closest to the selected time
+                if len(beats) > 0:
+                    beat_distances = np.abs(beats - first_downbeat_frame)
+                    closest_beat_idx = np.argmin(beat_distances)
+                    
+                    # Generate downbeats at regular intervals from this point
+                    for i in range(closest_beat_idx, len(beats), beats_per_measure):
+                        downbeat_indices.append(i)
+                    
+                    # Also add downbeats before the selected point if possible
+                    for i in range(closest_beat_idx - beats_per_measure, -1, -beats_per_measure):
+                        downbeat_indices.insert(0, i)
+                
+                # Convert indices to frame numbers
+                if downbeat_indices:
+                    downbeats = beats[downbeat_indices]
+                    print(f"  Generated {len(downbeats)} downbeats from manual selection")
+                    return downbeats
+                else:
+                    print("  Could not generate downbeats from selection, using automatic detection")
+                    return self._detect_downbeats(audio, sr, beats, 0)
+            
+        except ImportError:
+            print("  Warning: GUI not available, falling back to automatic detection")
+            return self._detect_downbeats(audio, sr, beats, 0)
+        except Exception as e:
+            print(f"  Warning: Manual selection failed ({e}), using automatic detection")
+            return self._detect_downbeats(audio, sr, beats, 0)

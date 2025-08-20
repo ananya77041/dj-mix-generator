@@ -92,7 +92,7 @@ class TrackCache:
             print(f"Warning: Could not calculate hash for {filepath}: {e}")
             return None
     
-    def _get_cache_key(self, filepath: str) -> Optional[str]:
+    def _get_cache_key(self, filepath: str, manual_downbeats: bool = False) -> Optional[str]:
         """
         Generate cache key based on file hash and modification time
         Returns None if file cannot be accessed
@@ -104,8 +104,9 @@ class TrackCache:
             if file_hash is None:
                 return None
             
-            # Include file size and modification time for additional validation
-            cache_key = f"{file_hash}_{file_stat.st_size}_{int(file_stat.st_mtime)}"
+            # Include file size, modification time, and downbeat mode for cache isolation
+            downbeat_suffix = "_manual" if manual_downbeats else "_auto"
+            cache_key = f"{file_hash}_{file_stat.st_size}_{int(file_stat.st_mtime)}{downbeat_suffix}"
             return cache_key
             
         except OSError as e:
@@ -134,20 +135,20 @@ class TrackCache:
                 deserialized[key] = value
         return deserialized
     
-    def is_cached(self, filepath: str) -> bool:
+    def is_cached(self, filepath: str, manual_downbeats: bool = False) -> bool:
         """Check if track analysis is already cached"""
-        cache_key = self._get_cache_key(filepath)
+        cache_key = self._get_cache_key(filepath, manual_downbeats)
         if cache_key is None:
             return False
         
         return cache_key in self.metadata
     
-    def get_cached_analysis(self, filepath: str) -> Optional[Track]:
+    def get_cached_analysis(self, filepath: str, manual_downbeats: bool = False) -> Optional[Track]:
         """
         Retrieve cached track analysis
         Returns None if not found or if cache is invalid
         """
-        cache_key = self._get_cache_key(filepath)
+        cache_key = self._get_cache_key(filepath, manual_downbeats)
         if cache_key is None or cache_key not in self.metadata:
             return None
         
@@ -182,9 +183,9 @@ class TrackCache:
             self._remove_cache_entry(cache_key)
             return None
     
-    def cache_analysis(self, track: Track):
+    def cache_analysis(self, track: Track, manual_downbeats: bool = False):
         """Cache track analysis results"""
-        cache_key = self._get_cache_key(str(track.filepath))
+        cache_key = self._get_cache_key(str(track.filepath), manual_downbeats)
         if cache_key is None:
             return
         

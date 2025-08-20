@@ -8,6 +8,7 @@ A modular Python tool to create continuous DJ mixes from WAV files. The program 
 - **Musical key estimation** with chromagram analysis
 - **Beat matching** via time-stretching to align tempos
 - **Enhanced downbeat detection** optimized for kick drums and percussive elements
+- **Visual downbeat selection** with interactive waveform interface for manual precision
 - **Professional DJ transitions** with tracks entering on their first downbeat
 - **Transition preview mode** to test-listen only the transition sections
 - **Intelligent track caching** to avoid re-analyzing the same tracks
@@ -98,6 +99,28 @@ python dj_mix_generator.py --no-cache track1.wav track2.wav track3.wav
 - **Automatic management**: Cache is stored in `~/.dj_mix_generator_cache/`
 - **Safe storage**: Metadata (JSON) and audio data (pickle) stored separately
 
+### Visual Downbeat Selection
+
+For maximum precision, manually select the first downbeat using an interactive waveform:
+
+```bash
+python dj_mix_generator.py --manual-downbeats track1.wav track2.wav track3.wav
+```
+
+**Interactive Features:**
+- **Waveform Display**: Shows first 10 seconds of each track with detected beats
+- **Visual Selection**: Click on the waveform where the first downbeat should occur
+- **Beat Snapping**: Clicks near detected beats automatically snap for precision
+- **Auto-Generation**: Creates regular downbeat pattern from your selection
+- **Fallback Options**: Choose automatic detection or cancel if needed
+
+The GUI opens for each track during analysis, allowing you to:
+1. See the waveform with detected beats (orange dashed lines)
+2. Click where the first downbeat should be (red line shows selection)
+3. Choose "Confirm" to use your selection, "Auto-Detect" for automatic, or "Cancel"
+
+Manual selections are cached separately from automatic detection!
+
 ### Example Output
 
 ```
@@ -110,7 +133,7 @@ Analyzing: track1.wav
   [1/3] BPM: 128.0, Key: G major, Duration: 180.5s, Downbeats: 42
 
 Analyzing: track2.wav
-  ✓ Loaded from cache
+  ✓ Loaded from cache (automatic downbeats)
   [2/3] BPM: 132.1, Key: A minor, Duration: 210.2s, Downbeats: 48
 
 Analyzing: track3.wav
@@ -258,8 +281,12 @@ python dj_mix_generator.py --reorder-by-key your_track1.wav your_track2.wav your
 # Test transitions only (for quick previewing)
 python dj_mix_generator.py --transitions-only your_track1.wav your_track2.wav your_track3.wav
 
+# Manual downbeat selection for precision
+python dj_mix_generator.py --manual-downbeats your_track1.wav your_track2.wav your_track3.wav
+
 # Combine options
 python dj_mix_generator.py --reorder-by-key --transitions-only your_track1.wav your_track2.wav your_track3.wav
+python dj_mix_generator.py --manual-downbeats --reorder-by-key your_track1.wav your_track2.wav
 
 # Output files: dj_mix.wav (full mix) or dj_transitions_preview.wav (transitions only)
 ```

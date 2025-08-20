@@ -16,9 +16,9 @@ from models import Track
 class DJMixGenerator:
     """Main DJ Mix Generator class that coordinates audio analysis and mix generation"""
     
-    def __init__(self, use_cache: bool = True):
+    def __init__(self, use_cache: bool = True, manual_downbeats: bool = False):
         self.tracks: List[Track] = []
-        self.analyzer = AudioAnalyzer(use_cache=use_cache)
+        self.analyzer = AudioAnalyzer(use_cache=use_cache, manual_downbeats=manual_downbeats)
         self.mixer = MixGenerator()
         self.key_matcher = KeyMatcher()
     
@@ -105,6 +105,7 @@ def main():
         print("\nOptions:")
         print("  --reorder-by-key       Reorder tracks for optimal harmonic mixing")
         print("  --transitions-only     Generate only transition sections for testing (with 5s buffers)")
+        print("  --manual-downbeats     Use visual interface to manually select first downbeat")
         print("  --no-cache             Disable track analysis caching")
         print("  --cache-info           Show cache information and exit")
         print("  --clear-cache          Clear track analysis cache and exit")
@@ -114,6 +115,7 @@ def main():
     # Parse command line options
     reorder_by_key = False
     transitions_only = False
+    manual_downbeats = False
     use_cache = True
     playlist = []
     output_path = "dj_mix.wav"
@@ -156,6 +158,10 @@ def main():
             args.remove("--transitions-only")
             output_path = "dj_transitions_preview.wav"  # Different filename for transitions
         
+        if "--manual-downbeats" in args:
+            manual_downbeats = True
+            args.remove("--manual-downbeats")
+        
         if "--no-cache" in args:
             use_cache = False
             args.remove("--no-cache")
@@ -168,7 +174,7 @@ def main():
             return 1
     
     try:
-        dj = DJMixGenerator(use_cache=use_cache)
+        dj = DJMixGenerator(use_cache=use_cache, manual_downbeats=manual_downbeats)
         dj.load_playlist(playlist)
         
         # Optionally reorder by key
