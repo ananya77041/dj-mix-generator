@@ -272,14 +272,17 @@ class MixGenerator:
         return corrected_audio, corrected_beats_frames, corrected_downbeats_frames
     
     def _create_crossfade(self, track1: Track, track2: Track, transition_duration: float) -> Tuple[np.ndarray, np.ndarray, Track]:
-        """Create crossfade transition between two tempo-matched tracks"""
-        # Find optimal transition points using downbeat alignment
+        """Create crossfade transition between two tempo-matched tracks
+        
+        Note: track1 and track2 parameters are already tempo-matched by create_transition()
+        """
+        # Find optimal transition points using downbeat alignment on tempo-matched tracks
         print(f"  Aligning to downbeats...")
         track1_end_sample, track2_start_sample = self.beat_aligner.find_optimal_transition_points(
             track1, track2, transition_duration
         )
         
-        # Extract beat-aligned audio segments
+        # Extract beat-aligned audio segments using tempo-matched tracks  
         track1_outro, track2_intro = self.beat_aligner.align_beats_for_transition(
             track1, track2, track1_end_sample, track2_start_sample, transition_duration
         )

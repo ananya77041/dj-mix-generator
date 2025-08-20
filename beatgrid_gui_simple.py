@@ -37,6 +37,14 @@ class SimpleBeatgridAligner:
         self.track2_start_sample = track2_start_sample
         self.transition_duration = transition_duration
         
+        # Debug: Check if tracks are tempo-matched before interactive alignment
+        bpm_diff = abs(track1.bpm - track2.bpm)
+        if bpm_diff > 0.1:
+            print(f"  ⚠ Warning: Tracks have different tempos (Track1: {track1.bpm:.1f}, Track2: {track2.bpm:.1f}, diff: {bpm_diff:.1f} BPM)")
+            print(f"  This indicates tempo alignment should occur BEFORE interactive beatgrid alignment")
+        else:
+            print(f"  ✅ Tracks are tempo-matched (Track1: {track1.bpm:.1f}, Track2: {track2.bpm:.1f})")
+        
         # Display parameters - show 4 measures
         self.beats_per_measure = 4
         self.measures_to_show = 4
