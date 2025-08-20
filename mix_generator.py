@@ -81,16 +81,17 @@ class MixGenerator:
         return self._create_crossfade(track1_stretched, track2_stretched, transition_duration)
     
     def _stretch_track_to_bpm(self, track: Track, target_bpm: float) -> Track:
-        """Stretch a track to match target BPM"""
+        """Stretch a track to match target BPM with intelligent tempo correction"""
         bpm_ratio = track.bpm / target_bpm  # Ratio to stretch to target tempo
         
         if abs(bpm_ratio - 1.0) > 0.05:  # Only stretch if BPMs differ significantly
             print(f"    Time-stretching {track.filepath.name}: {track.bpm:.1f} -> {target_bpm:.1f} (ratio: {bpm_ratio:.3f})")
-            stretched_audio = librosa.effects.time_stretch(track.audio, rate=bpm_ratio)
+            print(f"    Applying intelligent tempo correction to eliminate drift...")
             
-            # Adjust timing information
-            stretched_beats = track.beats / bpm_ratio  # Beats get closer together when tempo increases
-            stretched_downbeats = track.downbeats / bpm_ratio
+            # Apply intelligent tempo correction to maintain consistent timing
+            stretched_audio, corrected_beats, corrected_downbeats = self._apply_intelligent_tempo_correction(
+                track, target_bpm
+            )
             
             return Track(
                 filepath=track.filepath,
@@ -98,13 +99,171 @@ class MixGenerator:
                 sr=track.sr,
                 bpm=target_bpm,
                 key=track.key,
-                beats=stretched_beats,
-                downbeats=stretched_downbeats,
+                beats=corrected_beats,
+                downbeats=corrected_downbeats,
                 duration=len(stretched_audio) / track.sr
             )
         else:
             print(f"    {track.filepath.name}: No stretching needed ({track.bpm:.1f} ≈ {target_bpm:.1f})")
+            # Even if no major stretching needed, apply tempo correction to eliminate drift
+            if len(track.beats) > 4:  # Only if we have enough beats
+                print(f"    Applying drift correction at current tempo...")
+                stretched_audio, corrected_beats, corrected_downbeats = self._apply_intelligent_tempo_correction(
+                    track, track.bpm
+                )
+                return Track(
+                    filepath=track.filepath,
+                    audio=stretched_audio,
+                    sr=track.sr,
+                    bpm=track.bpm,
+                    key=track.key,
+                    beats=corrected_beats,
+                    downbeats=corrected_downbeats,
+                    duration=len(stretched_audio) / track.sr
+                )
             return track
+    
+    def _apply_intelligent_tempo_correction(self, track: Track, target_bpm: float) -> Tuple[np.ndarray, np.ndarray, np.ndarray]:
+        """
+        Apply intelligent tempo correction to eliminate beat drift throughout track duration.
+        Uses piecewise time-stretching between beats to maintain perfect tempo consistency.
+        """
+        if len(track.beats) < 2:
+            print("    Warning: Not enough beats for intelligent tempo correction")
+            return track.audio, track.beats, track.downbeats
+        
+        # Convert beat and downbeat frames to sample positions
+        beat_samples = librosa.frames_to_samples(track.beats, hop_length=512)
+        downbeat_samples = librosa.frames_to_samples(track.downbeats, hop_length=512) if len(track.downbeats) > 0 else np.array([])
+        
+        # Calculate ideal beat positions based on target BPM
+        samples_per_beat = (60.0 / target_bpm) * track.sr
+        
+        # Create ideal beat grid starting from the first detected beat
+        first_beat_sample = beat_samples[0]
+        ideal_beat_samples = []
+        
+        # Generate ideal beat positions
+        current_pos = first_beat_sample
+        beat_index = 0
+        
+        while current_pos < len(track.audio) and beat_index < len(beat_samples):
+            ideal_beat_samples.append(current_pos)
+            current_pos += samples_per_beat
+            beat_index += 1
+        
+        ideal_beat_samples = np.array(ideal_beat_samples)
+        
+        # Apply piecewise stretching between beats
+        stretched_segments = []
+        corrected_beat_positions = []
+        corrected_downbeat_positions = []
+        
+        print(f"      Applying piecewise tempo correction across {len(ideal_beat_samples)} beats...")
+        
+        for i in range(len(ideal_beat_samples)):
+            if i == 0:
+                # First segment: from start to first beat
+                segment_start = 0
+                segment_end = int(beat_samples[0]) if 0 < len(beat_samples) else len(track.audio)
+                ideal_start = 0 
+                ideal_end = int(ideal_beat_samples[0])
+            else:
+                # Segments between beats
+                if i < len(beat_samples):
+                    segment_start = int(beat_samples[i-1])
+                    segment_end = int(beat_samples[i])
+                    ideal_start = int(ideal_beat_samples[i-1])
+                    ideal_end = int(ideal_beat_samples[i])
+                else:
+                    break
+            
+            # Extract segment
+            if segment_end > segment_start and segment_end <= len(track.audio):
+                segment = track.audio[segment_start:segment_end]
+                
+                # Calculate stretch ratio
+                original_length = segment_end - segment_start
+                target_length = ideal_end - ideal_start
+                
+                if original_length > 0 and target_length > 0:
+                    stretch_ratio = target_length / original_length
+                    
+                    # Apply stretch with reasonable limits
+                    if 0.5 <= stretch_ratio <= 2.0:  # Reasonable stretch limits
+                        try:
+                            stretched_segment = librosa.effects.time_stretch(segment, rate=1/stretch_ratio)
+                            
+                            # Ensure exact target length
+                            if len(stretched_segment) > target_length:
+                                stretched_segment = stretched_segment[:target_length]
+                            elif len(stretched_segment) < target_length:
+                                padding = target_length - len(stretched_segment)
+                                stretched_segment = np.pad(stretched_segment, (0, padding), 'constant')
+                                
+                        except Exception as e:
+                            print(f"      Warning: Stretch failed for segment {i}, using original")
+                            stretched_segment = np.resize(segment, target_length)
+                    else:
+                        # Stretch ratio too extreme, just resize
+                        stretched_segment = np.resize(segment, target_length)
+                    
+                    stretched_segments.append(stretched_segment)
+                    
+                    # Record corrected beat position
+                    if i < len(ideal_beat_samples):
+                        corrected_beat_positions.append(ideal_beat_samples[i])
+        
+        # Handle final segment after last beat
+        if len(beat_samples) > 0 and int(beat_samples[-1]) < len(track.audio):
+            final_segment = track.audio[int(beat_samples[-1]):]
+            stretched_segments.append(final_segment)
+        
+        # Combine all stretched segments
+        if stretched_segments:
+            corrected_audio = np.concatenate(stretched_segments)
+            print(f"      Tempo correction complete: {len(corrected_beat_positions)} beats aligned")
+        else:
+            print("      Warning: No segments could be processed, using original audio")
+            corrected_audio = track.audio
+            corrected_beat_positions = beat_samples
+        
+        # Convert corrected positions back to frames for beat/downbeat arrays
+        corrected_beats_frames = librosa.samples_to_frames(np.array(corrected_beat_positions), hop_length=512)
+        
+        # Correct downbeat positions proportionally
+        if len(track.downbeats) > 0:
+            # Map downbeats to their new positions based on the stretching applied
+            corrected_downbeats_frames = []
+            for downbeat_sample in downbeat_samples:
+                # Find which beat segment this downbeat belongs to
+                beat_idx = np.searchsorted(beat_samples, downbeat_sample)
+                if beat_idx < len(corrected_beat_positions):
+                    # Proportionally adjust downbeat position within its beat segment
+                    if beat_idx > 0:
+                        segment_start = beat_samples[beat_idx-1]
+                        ideal_start = corrected_beat_positions[beat_idx-1]
+                    else:
+                        segment_start = 0
+                        ideal_start = 0
+                    
+                    if beat_idx < len(beat_samples):
+                        segment_end = beat_samples[beat_idx]
+                        ideal_end = corrected_beat_positions[beat_idx]
+                    else:
+                        continue
+                    
+                    # Calculate proportional position
+                    if segment_end > segment_start:
+                        proportion = (downbeat_sample - segment_start) / (segment_end - segment_start)
+                        corrected_downbeat_sample = ideal_start + proportion * (ideal_end - ideal_start)
+                        corrected_downbeats_frames.append(librosa.samples_to_frames(corrected_downbeat_sample, hop_length=512))
+            
+            corrected_downbeats_frames = np.array(corrected_downbeats_frames)
+        else:
+            corrected_downbeats_frames = track.downbeats
+        
+        return corrected_audio, corrected_beats_frames, corrected_downbeats_frames
     
     def _create_crossfade(self, track1: Track, track2: Track, transition_duration: float) -> Tuple[np.ndarray, np.ndarray, Track]:
         """Create crossfade transition between two tempo-matched tracks"""

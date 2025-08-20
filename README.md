@@ -11,6 +11,7 @@ A modular Python tool to create continuous DJ mixes from WAV files. The program 
 - **Visual downbeat selection** with interactive waveform interface for manual precision
 - **Professional DJ transitions** with perfect beat-by-beat alignment throughout transitions
 - **Micro-stretching technology** ensures every single beat matches between tracks
+- **Intelligent tempo correction** eliminates beat drift throughout track duration using piecewise time-stretching
 - **Transition preview mode** to test-listen only the transition sections
 - **Intelligent track caching** to avoid re-analyzing the same tracks
 - **Smooth crossfade transitions** with equal-power curves (30 seconds default)
@@ -300,19 +301,25 @@ File size: 82.3 MB
    - Combines multiple metrics with weighted scoring system
    - Pattern validation using autocorrelation for consistent measure detection
    
-4. **Perfect Beat Alignment**: Professional DJ-style transitions:
+4. **Intelligent Tempo Correction**: Eliminates beat drift:
+   - **Piecewise time-stretching**: Stretches audio segments between detected beats
+   - **Perfect tempo consistency**: Maintains exact BPM throughout entire track duration
+   - **Manual tempo support**: Respects user-defined BPM from manual downbeat selection
+   - **Drift elimination**: Prevents tempo variations from accumulating over track length
+
+5. **Perfect Beat Alignment**: Professional DJ-style transitions:
    - Finds optimal outro point in current track (ending on downbeat)
    - Finds optimal intro point in next track (starting on downbeat) 
    - **Micro-stretching**: Applies piecewise time-stretching between beat markers
    - **Beat-by-beat alignment**: Every single beat matches throughout the transition
    - **Sub-5ms precision**: Achieves professional-level timing accuracy
 
-5. **Crossfading**: Creates smooth transitions using:
+6. **Crossfading**: Creates smooth transitions using:
    - Equal-power crossfade curves (cosine/sine)
    - 30-second default transition duration
    - Beat-aligned segments for seamless mixing
 
-6. **Audio Processing**: 
+7. **Audio Processing**: 
    - Handles different sample rates via resampling
    - Normalizes final output to prevent clipping
    - Maintains audio quality throughout the process
