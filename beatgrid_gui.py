@@ -14,7 +14,7 @@ from models import Track
 
 
 class BeatgridAligner:
-    """Interactive GUI for aligning beatgrids between two tracks during transitions"""
+    """Interactive GUI for step-by-step beatgrid alignment: Track 1 → Track 2 → Final alignment"""
     
     def __init__(self, track1: Track, track2: Track, track1_outro: np.ndarray, track2_intro: np.ndarray,
                  outro_start: int, track2_start_sample: int, transition_duration: float):
@@ -62,6 +62,11 @@ class BeatgridAligner:
         self.track2_all_beats = self._get_all_beats_as_time(track2)
         self.track1_all_downbeats = self._get_all_downbeats_as_time(track1) 
         self.track2_all_downbeats = self._get_all_downbeats_as_time(track2)
+        
+        # Workflow state management
+        self.current_step = 1  # 1=Track 1 adjustment, 2=Track 2 adjustment, 3=Final alignment
+        self.track1_adjusted_downbeat = None  # User-adjusted first downbeat position
+        self.track2_adjusted_downbeat = None  # User-adjusted first downbeat position
         
         # Track alignment offsets (user adjustable)
         self.track1_offset = 0.0  # seconds
@@ -169,30 +174,74 @@ class BeatgridAligner:
         
         return beats_in_measures
     
-    def _setup_plot(self):
-        """Setup the matplotlib plot with stacked waveforms and spanning beatgrids"""
-        # Create figure with subplots: track1, track2, controls
-        self.fig, (self.ax_track1, self.ax_track2, self.ax_controls) = plt.subplots(
-            3, 1, figsize=(16, 12), 
-            gridspec_kw={'height_ratios': [2.5, 2.5, 1]}
-        )
-        
-        # Check if tracks are tempo-matched
+    def _get_step_instructions(self):
+        """Get instructions text based on current workflow step"""
+        if self.current_step == 1:
+            return (
+                f"STEP 1: Adjust Track 1 Beatgrid ({self.track1.filepath.name}):\\n"
+                f"• Click and drag the PURPLE downbeat line to align with the actual first downbeat\\n"
+                f"• Use the Play button to listen to this section while adjusting\\n" 
+                f"• Blue lines = beats, Purple line = first downbeat (most important!)\\n"
+                f"• This will set the reference point for the entire transition\\n"
+                f"• Click 'Next Step' when the purple line aligns perfectly with the first downbeat"
+            )
+        elif self.current_step == 2:
+            return (
+                f"STEP 2: Adjust Track 2 Beatgrid ({self.track2.filepath.name}):\\n"
+                f"• Click and drag the GREEN downbeat line to align with the actual first downbeat\\n"
+                f"• Use the Play button to listen to this section while adjusting\\n"
+                f"• Orange lines = beats, Green line = first downbeat (most important!)\\n" 
+                f"• This will set the reference point for Track 2's transition\\n"
+                f"• Click 'Next Step' when the green line aligns perfectly with the first downbeat"
+            )
+        else:
+            return (
+                f"STEP 3: Final Transition Alignment:\\n"
+                f"• Both tracks' downbeats are now properly aligned\\n"
+                f"• The system will create the final transition using your adjustments\\n"
+                f"• Purple line (Track 1) and Green line (Track 2) mark the transition points\\n"
+                f"• Click 'Confirm' to create the final aligned transition"
+            )
+    
+    def _setup_track1_view(self):
+        """Setup single track view for Track 1 adjustment"""
+        # Plot track1 waveform
+        self.ax_main.plot(self.measure_axis, self.track1_outro_display, color='blue', alpha=0.7, linewidth=1.0)
+        self.ax_main.set_title(f'Step 1: Adjust Track 1 Beatgrid - {self.track1.filepath.name} (BPM: {self.track1.bpm:.1f})', 
+                              fontsize=14, fontweight='bold', color='blue')
+        self.ax_main.set_xlabel('Measures', fontsize=12)
+        self.ax_main.set_ylabel('Amplitude', fontsize=10)
+        self.ax_main.grid(True, alpha=0.3)
+        self.ax_main.set_xlim(0, self.measures_to_show)
+    
+    def _setup_track2_view(self):
+        """Setup single track view for Track 2 adjustment"""
+        # Plot track2 waveform
+        self.ax_main.plot(self.measure_axis, self.track2_intro_display, color='red', alpha=0.7, linewidth=1.0)
+        self.ax_main.set_title(f'Step 2: Adjust Track 2 Beatgrid - {self.track2.filepath.name} (BPM: {self.track2.bpm:.1f})', 
+                              fontsize=14, fontweight='bold', color='red')
+        self.ax_main.set_xlabel('Measures', fontsize=12)
+        self.ax_main.set_ylabel('Amplitude', fontsize=10)
+        self.ax_main.grid(True, alpha=0.3)
+        self.ax_main.set_xlim(0, self.measures_to_show)
+    
+    def _setup_dual_track_view(self):
+        """Setup dual track view for final alignment"""
         tempo_matched = abs(self.track1.bpm - self.track2.bpm) < 0.1
         tempo_status = "Tempo-Matched" if tempo_matched else f"BPM: {self.track1.bpm:.1f}"
         
-        # Plot track1 waveform (adjustable)
+        # Plot track1 waveform
         self.ax_track1.plot(self.measure_axis, self.track1_outro_display, color='blue', alpha=0.7, linewidth=1.0)
-        self.ax_track1.set_title(f'Track 1: {self.track1.filepath.name} (Adjustable - {tempo_status})', 
+        self.ax_track1.set_title(f'Step 3: Final Alignment - Track 1: {self.track1.filepath.name} ({tempo_status})', 
                                 fontsize=12, fontweight='bold', color='blue')
         self.ax_track1.set_ylabel('Amplitude', fontsize=10)
         self.ax_track1.grid(True, alpha=0.3)
         self.ax_track1.set_xlim(0, self.measures_to_show)
         
-        # Plot track2 waveform (adjustable)
+        # Plot track2 waveform
         self.ax_track2.plot(self.measure_axis, self.track2_intro_display, color='red', alpha=0.7, linewidth=1.0)
         tempo_status2 = "Tempo-Matched" if tempo_matched else f"BPM: {self.track2.bpm:.1f}"
-        self.ax_track2.set_title(f'Track 2: {self.track2.filepath.name} (Adjustable - {tempo_status2})', 
+        self.ax_track2.set_title(f'Track 2: {self.track2.filepath.name} ({tempo_status2})', 
                                 fontsize=12, fontweight='bold', color='red')
         self.ax_track2.set_xlabel('Measures', fontsize=12)
         self.ax_track2.set_ylabel('Amplitude', fontsize=10)
@@ -201,26 +250,38 @@ class BeatgridAligner:
         
         # Link the x-axes so they zoom/pan together
         self.ax_track2.sharex(self.ax_track1)
+    
+    def _setup_plot(self):
+        """Setup the matplotlib plot based on current workflow step"""
+        if self.current_step in [1, 2]:
+            # Steps 1 & 2: Single track view for individual adjustment
+            self.fig, (self.ax_main, self.ax_controls) = plt.subplots(
+                2, 1, figsize=(16, 10), 
+                gridspec_kw={'height_ratios': [4, 1]}
+            )
+            self.ax_track1 = self.ax_main  # Alias for compatibility
+            self.ax_track2 = None
+        else:
+            # Step 3: Dual track view for final alignment
+            self.fig, (self.ax_track1, self.ax_track2, self.ax_controls) = plt.subplots(
+                3, 1, figsize=(16, 12), 
+                gridspec_kw={'height_ratios': [2.5, 2.5, 1]}
+            )
+            self.ax_main = self.ax_track1  # Alias for compatibility
+        
+        # Plot based on current workflow step
+        if self.current_step == 1:
+            self._setup_track1_view()
+        elif self.current_step == 2:
+            self._setup_track2_view()
+        else:
+            self._setup_dual_track_view()
         
         # Draw initial beatgrids
         self._draw_beatgrids()
         
-        # Instructions
-        tempo_matched = abs(self.track1.bpm - self.track2.bpm) < 0.1
-        tempo_note = "Tracks are already tempo-matched - fine-tune beat alignment only" if tempo_matched else "Align beats between different tempo tracks"
-        
-        instruction_text = (
-            f"Beatgrid Alignment - First 4 Measures of Transition (Musical View):\\n"
-            f"• {tempo_note}\\n"
-            f"• Uses ACTUAL DETECTED BEATS (no drift) from audio analysis\\n"
-            f"• X-axis shows MEASURES (0-4) with first downbeats aligned at measure 0\\n"
-            f"• Top: Track 1 (adjustable) | Bottom: Track 2 (adjustable)\\n"
-            f"• BOTH TRACKS can be adjusted by clicking and dragging\\n"
-            f"• Blue/purple lines: Track 1 | Orange/green lines: Track 2\\n"
-            f"• Lines become dashed when offset from original position\\n"
-            f"• Click on Track 1 waveform to adjust Track 1 | Click on Track 2 waveform to adjust Track 2\\n"
-            f"• Perfect alignment = all beat lines align vertically at same measure positions"
-        )
+        # Instructions based on current step
+        instruction_text = self._get_step_instructions()
         
         self.ax_controls.text(0.02, 0.95, instruction_text, 
                             transform=self.ax_controls.transAxes, fontsize=10,
@@ -241,15 +302,18 @@ class BeatgridAligner:
         self.fig.canvas.manager.set_window_title('Beatgrid Alignment Tool - Musical View (Measures)')
     
     def _draw_beatgrids(self):
-        """Draw the beatgrid lines spanning across both tracks using actual detected beats"""
-        # Clear existing beatgrid lines from both axes
-        for ax in [self.ax_track1, self.ax_track2]:
-            # Remove beat lines (keep only the waveform plot)
-            lines_to_remove = []
-            for line in ax.lines[1:]:  # Keep the first line (waveform)
-                lines_to_remove.append(line)
-            for line in lines_to_remove:
-                line.remove()
+        """Draw the beatgrid lines based on current workflow step"""
+        # Clear existing beatgrid lines
+        axes_to_clear = [self.ax_main] if self.current_step in [1, 2] else [self.ax_track1, self.ax_track2]
+        
+        for ax in axes_to_clear:
+            if ax is not None:
+                # Remove beat lines (keep only the waveform plot)
+                lines_to_remove = []
+                for line in ax.lines[1:]:  # Keep the first line (waveform)
+                    lines_to_remove.append(line)
+                for line in lines_to_remove:
+                    line.remove()
         
         # Calculate window parameters for the displayed segment
         # Adjust window start to align first downbeats at measure 0
@@ -286,40 +350,89 @@ class BeatgridAligner:
             offset=self.track2_offset
         )
         
-        # Draw Track 1 beatgrid (adjustable beats - blue lines spanning both plots)
-        # Use dashed lines if track1 has been offset by user
-        track1_line_style = '--' if abs(self.track1_offset) > 0.01 else '-'
-        track1_alpha = 0.8 if abs(self.track1_offset) > 0.01 else 0.6
-        
-        for beat_measure in track1_beats_in_display:
-            if 0 <= beat_measure <= self.measures_to_show:
-                # Draw on both subplots to create spanning effect
-                self.ax_track1.axvline(x=beat_measure, color='blue', alpha=track1_alpha, linestyle=track1_line_style, linewidth=1.5)
-                self.ax_track2.axvline(x=beat_measure, color='blue', alpha=track1_alpha, linestyle=track1_line_style, linewidth=1.5)
-        
-        # Draw Track 1 downbeats (adjustable downbeats - purple lines spanning both plots)  
-        for downbeat_measure in track1_downbeats_in_display:
-            if 0 <= downbeat_measure <= self.measures_to_show:
-                self.ax_track1.axvline(x=downbeat_measure, color='purple', alpha=track1_alpha + 0.2, linestyle=track1_line_style, linewidth=2.5)
-                self.ax_track2.axvline(x=downbeat_measure, color='purple', alpha=track1_alpha + 0.2, linestyle=track1_line_style, linewidth=2.5)
-        
-        # Draw Track 2 beatgrid (adjustable beats - orange lines spanning both plots)
-        for beat_measure in track2_beats_in_display:
-            if 0 <= beat_measure <= self.measures_to_show:
-                self.ax_track1.axvline(x=beat_measure, color='orange', alpha=0.6, linestyle='--', linewidth=1.5)
-                self.ax_track2.axvline(x=beat_measure, color='orange', alpha=0.6, linestyle='--', linewidth=1.5)
-        
-        # Draw Track 2 downbeats (adjustable downbeats - green lines spanning both plots)
-        for downbeat_measure in track2_downbeats_in_display:
-            if 0 <= downbeat_measure <= self.measures_to_show:
-                self.ax_track1.axvline(x=downbeat_measure, color='green', alpha=0.8, linestyle='--', linewidth=2.5)
-                self.ax_track2.axvline(x=downbeat_measure, color='green', alpha=0.8, linestyle='--', linewidth=2.5)
+        # Draw beatgrids based on current step
+        if self.current_step == 1:
+            self._draw_track1_beatgrid(track1_beats_in_display, track1_downbeats_in_display)
+        elif self.current_step == 2:
+            self._draw_track2_beatgrid(track2_beats_in_display, track2_downbeats_in_display)
+        else:
+            self._draw_dual_beatgrids(track1_beats_in_display, track1_downbeats_in_display, 
+                                    track2_beats_in_display, track2_downbeats_in_display)
         
         # Add alignment quality indicator
         self._update_alignment_quality()
         
         # Refresh the plot
         self.fig.canvas.draw()
+    
+    def _draw_track1_beatgrid(self, beats_in_display, downbeats_in_display):
+        """Draw Track 1 beatgrid for step 1"""
+        track1_line_style = '--' if abs(self.track1_offset) > 0.01 else '-'
+        track1_alpha = 0.8 if abs(self.track1_offset) > 0.01 else 0.6
+        
+        # Draw beats (blue lines)
+        for beat_measure in beats_in_display:
+            if 0 <= beat_measure <= self.measures_to_show:
+                self.ax_main.axvline(x=beat_measure, color='blue', alpha=track1_alpha, 
+                                   linestyle=track1_line_style, linewidth=1.5)
+        
+        # Draw downbeats (purple lines - most important!)
+        for downbeat_measure in downbeats_in_display:
+            if 0 <= downbeat_measure <= self.measures_to_show:
+                self.ax_main.axvline(x=downbeat_measure, color='purple', alpha=track1_alpha + 0.2, 
+                                   linestyle=track1_line_style, linewidth=3.0)
+    
+    def _draw_track2_beatgrid(self, beats_in_display, downbeats_in_display):
+        """Draw Track 2 beatgrid for step 2"""
+        track2_line_style = '--' if abs(self.track2_offset) > 0.01 else '-'
+        track2_alpha = 0.8 if abs(self.track2_offset) > 0.01 else 0.6
+        
+        # Draw beats (orange lines)
+        for beat_measure in beats_in_display:
+            if 0 <= beat_measure <= self.measures_to_show:
+                self.ax_main.axvline(x=beat_measure, color='orange', alpha=track2_alpha, 
+                                   linestyle=track2_line_style, linewidth=1.5)
+        
+        # Draw downbeats (green lines - most important!)
+        for downbeat_measure in downbeats_in_display:
+            if 0 <= downbeat_measure <= self.measures_to_show:
+                self.ax_main.axvline(x=downbeat_measure, color='green', alpha=track2_alpha + 0.2, 
+                                   linestyle=track2_line_style, linewidth=3.0)
+    
+    def _draw_dual_beatgrids(self, track1_beats, track1_downbeats, track2_beats, track2_downbeats):
+        """Draw both beatgrids for step 3 (final alignment)"""
+        track1_line_style = '--' if abs(self.track1_offset) > 0.01 else '-'
+        track1_alpha = 0.8 if abs(self.track1_offset) > 0.01 else 0.6
+        
+        # Draw Track 1 beatgrid on both plots
+        for beat_measure in track1_beats:
+            if 0 <= beat_measure <= self.measures_to_show:
+                self.ax_track1.axvline(x=beat_measure, color='blue', alpha=track1_alpha, 
+                                     linestyle=track1_line_style, linewidth=1.5)
+                self.ax_track2.axvline(x=beat_measure, color='blue', alpha=track1_alpha, 
+                                     linestyle=track1_line_style, linewidth=1.5)
+        
+        for downbeat_measure in track1_downbeats:
+            if 0 <= downbeat_measure <= self.measures_to_show:
+                self.ax_track1.axvline(x=downbeat_measure, color='purple', alpha=track1_alpha + 0.2, 
+                                     linestyle=track1_line_style, linewidth=2.5)
+                self.ax_track2.axvline(x=downbeat_measure, color='purple', alpha=track1_alpha + 0.2, 
+                                     linestyle=track1_line_style, linewidth=2.5)
+        
+        # Draw Track 2 beatgrid on both plots
+        for beat_measure in track2_beats:
+            if 0 <= beat_measure <= self.measures_to_show:
+                self.ax_track1.axvline(x=beat_measure, color='orange', alpha=0.6, 
+                                     linestyle='--', linewidth=1.5)
+                self.ax_track2.axvline(x=beat_measure, color='orange', alpha=0.6, 
+                                     linestyle='--', linewidth=1.5)
+        
+        for downbeat_measure in track2_downbeats:
+            if 0 <= downbeat_measure <= self.measures_to_show:
+                self.ax_track1.axvline(x=downbeat_measure, color='green', alpha=0.8, 
+                                     linestyle='--', linewidth=2.5)
+                self.ax_track2.axvline(x=downbeat_measure, color='green', alpha=0.8, 
+                                     linestyle='--', linewidth=2.5)
     
     def _update_alignment_quality(self):
         """Calculate and display alignment quality using actual detected beats"""
@@ -390,36 +503,73 @@ class BeatgridAligner:
                 offset_info = f" | T1:{self.track1_offset:.2f}s T2:{self.track2_offset:.2f}s"
             
             title = f'Track 2: {self.track2.filepath.name} ({tempo_status}) - {quality} Alignment ({avg_offset:.1f}ms){offset_info}'
-            self.ax_track2.set_title(title, fontsize=12, fontweight='bold', color=color)
+            
+            # Only update track2 title if we're in dual track view (step 3)
+            if self.current_step == 3 and self.ax_track2 is not None:
+                self.ax_track2.set_title(title, fontsize=12, fontweight='bold', color=color)
     
     def _add_buttons(self):
-        """Add control buttons to the interface"""
-        # Button positions (left, bottom, width, height)
-        confirm_ax = plt.axes([0.75, 0.02, 0.12, 0.06])
-        auto_ax = plt.axes([0.62, 0.02, 0.12, 0.06]) 
-        reset_ax = plt.axes([0.49, 0.02, 0.12, 0.06])
-        cancel_ax = plt.axes([0.36, 0.02, 0.12, 0.06])
-        
-        # Create buttons
-        self.confirm_btn = Button(confirm_ax, 'Confirm', color='lightgreen', hovercolor='green')
-        self.auto_btn = Button(auto_ax, 'Auto-Align', color='lightblue', hovercolor='blue')
-        self.reset_btn = Button(reset_ax, 'Reset', color='lightyellow', hovercolor='yellow')
-        self.cancel_btn = Button(cancel_ax, 'Cancel', color='lightcoral', hovercolor='red')
-        
-        # Connect button events
-        self.confirm_btn.on_clicked(self._confirm_alignment)
-        self.auto_btn.on_clicked(self._auto_align)
-        self.reset_btn.on_clicked(self._reset_alignment)
-        self.cancel_btn.on_clicked(self._cancel_alignment)
+        """Add control buttons based on current workflow step"""
+        if self.current_step in [1, 2]:
+            # Steps 1 & 2: Individual track adjustment buttons
+            play_ax = plt.axes([0.10, 0.02, 0.12, 0.06])
+            next_ax = plt.axes([0.75, 0.02, 0.12, 0.06])
+            reset_ax = plt.axes([0.49, 0.02, 0.12, 0.06])
+            cancel_ax = plt.axes([0.36, 0.02, 0.12, 0.06])
+            
+            self.play_btn = Button(play_ax, 'Play Section', color='lightgreen', hovercolor='green')
+            self.next_btn = Button(next_ax, 'Next Step', color='lightblue', hovercolor='blue')
+            self.reset_btn = Button(reset_ax, 'Reset', color='lightyellow', hovercolor='yellow')
+            self.cancel_btn = Button(cancel_ax, 'Cancel', color='lightcoral', hovercolor='red')
+            
+            self.play_btn.on_clicked(self._play_section)
+            self.next_btn.on_clicked(self._next_step)
+            self.reset_btn.on_clicked(self._reset_alignment)
+            self.cancel_btn.on_clicked(self._cancel_alignment)
+        else:
+            # Step 3: Final alignment buttons
+            confirm_ax = plt.axes([0.75, 0.02, 0.12, 0.06])
+            auto_ax = plt.axes([0.62, 0.02, 0.12, 0.06]) 
+            reset_ax = plt.axes([0.49, 0.02, 0.12, 0.06])
+            cancel_ax = plt.axes([0.36, 0.02, 0.12, 0.06])
+            
+            self.confirm_btn = Button(confirm_ax, 'Confirm', color='lightgreen', hovercolor='green')
+            self.auto_btn = Button(auto_ax, 'Auto-Align', color='lightblue', hovercolor='blue')
+            self.reset_btn = Button(reset_ax, 'Reset', color='lightyellow', hovercolor='yellow')
+            self.cancel_btn = Button(cancel_ax, 'Cancel', color='lightcoral', hovercolor='red')
+            
+            self.confirm_btn.on_clicked(self._confirm_alignment)
+            self.auto_btn.on_clicked(self._auto_align)
+            self.reset_btn.on_clicked(self._reset_alignment)
+            self.cancel_btn.on_clicked(self._cancel_alignment)
     
     def _on_press(self, event):
-        """Handle mouse press for dragging - allow clicking anywhere on either waveform"""
-        if event.inaxes not in [self.ax_track1, self.ax_track2] or event.button != 1:
+        """Handle mouse press for dragging - allow clicking anywhere on the active waveform(s)"""
+        # Check which axes are valid based on current step
+        valid_axes = []
+        if self.current_step in [1, 2]:
+            # Single track view - only ax_main is valid
+            valid_axes = [self.ax_main]
+        else:
+            # Dual track view - both axes are valid
+            valid_axes = [self.ax_track1, self.ax_track2]
+        
+        if event.inaxes not in valid_axes or event.button != 1:
             return
         
-        # Determine which track is being dragged
+        # Determine which track is being dragged based on current step
         self.dragging = True
-        self.dragging_track = 1 if event.inaxes == self.ax_track1 else 2
+        
+        if self.current_step == 1:
+            # Step 1: Only Track 1 can be adjusted
+            self.dragging_track = 1
+        elif self.current_step == 2:
+            # Step 2: Only Track 2 can be adjusted  
+            self.dragging_track = 2
+        else:
+            # Step 3: Determine by which axis was clicked
+            self.dragging_track = 1 if event.inaxes == self.ax_track1 else 2
+        
         self.drag_start_x = event.xdata
         
         # Store the starting offset for the track being dragged
@@ -430,11 +580,20 @@ class BeatgridAligner:
             self.drag_start_offset = self.track2_offset
             current_offset = self.track2_offset
         
-        print(f"Started dragging Track {self.dragging_track} at {event.xdata:.3f}s (current offset: {current_offset:.3f}s)")
+        print(f"Started dragging Track {self.dragging_track} at {event.xdata:.3f} measures (current offset: {current_offset:.3f}s)")
     
     def _on_motion(self, event):
         """Handle mouse motion for dragging"""
-        if not self.dragging or event.inaxes not in [self.ax_track1, self.ax_track2] or event.xdata is None:
+        # Check which axes are valid based on current step
+        valid_axes = []
+        if self.current_step in [1, 2]:
+            # Single track view - only ax_main is valid
+            valid_axes = [self.ax_main]
+        else:
+            # Dual track view - both axes are valid
+            valid_axes = [self.ax_track1, self.ax_track2]
+        
+        if not self.dragging or event.inaxes not in valid_axes or event.xdata is None:
             return
         
         # Calculate offset change based on mouse movement (in measures)
@@ -552,6 +711,75 @@ class BeatgridAligner:
         self.track2_offset = 0.0
         self._draw_beatgrids()
         print("Both track alignments reset to original positions")
+    
+    def _play_section(self, event):
+        """Play the audio section currently displayed"""
+        try:
+            import sounddevice as sd
+            import numpy as np
+            
+            if self.current_step == 1:
+                audio = self.track1_outro_display
+                sr = self.track1.sr
+                track_name = "Track 1"
+            else:
+                audio = self.track2_intro_display  
+                sr = self.track2.sr
+                track_name = "Track 2"
+            
+            print(f"Playing {track_name} section...")
+            sd.play(audio, sr)
+            
+        except ImportError:
+            print("Audio playback not available - install sounddevice: pip install sounddevice")
+        except Exception as e:
+            print(f"Audio playback failed: {e}")
+    
+    def _next_step(self, event):
+        """Advance to the next step in the workflow"""
+        if self.current_step == 1:
+            # Save Track 1 adjustments and move to Track 2
+            self.track1_adjusted_downbeat = self._get_current_downbeat_position(1)
+            print(f"Track 1 downbeat position saved: {self.track1_adjusted_downbeat:.3f} measures")
+            self.current_step = 2
+            self._refresh_ui()
+        elif self.current_step == 2:
+            # Save Track 2 adjustments and move to final alignment
+            self.track2_adjusted_downbeat = self._get_current_downbeat_position(2)
+            print(f"Track 2 downbeat position saved: {self.track2_adjusted_downbeat:.3f} measures")
+            self.current_step = 3
+            self._refresh_ui()
+    
+    def _get_current_downbeat_position(self, track_num):
+        """Get the current position of the first downbeat for the specified track"""
+        if track_num == 1:
+            # Find the first purple line position (Track 1 downbeat)
+            track1_window_start = (self.outro_start - len(self.track1_outro)) / self.sr + self.track1_first_downbeat_offset
+            track1_downbeats = self._get_beats_in_window(
+                self.track1_all_downbeats,
+                track1_window_start,
+                self.display_duration,
+                offset=self.track1_offset
+            )
+            return track1_downbeats[0] if len(track1_downbeats) > 0 else 0.0
+        else:
+            # Find the first green line position (Track 2 downbeat)  
+            track2_window_start = self.track2_start_sample / self.sr + self.track2_first_downbeat_offset
+            track2_downbeats = self._get_beats_in_window(
+                self.track2_all_downbeats,
+                track2_window_start,
+                self.display_duration,
+                offset=self.track2_offset
+            )
+            return track2_downbeats[0] if len(track2_downbeats) > 0 else 0.0
+    
+    def _refresh_ui(self):
+        """Refresh the UI for the current workflow step"""
+        plt.close(self.fig)
+        self._setup_plot()
+        self._draw_beatgrids()
+        plt.tight_layout()
+        plt.show(block=False)
     
     def _confirm_alignment(self, event):
         """Confirm the current alignment"""
