@@ -30,7 +30,7 @@ cd /Users/andy.mishra/workspace/dj-mix-generator
 pip install -r requirements.txt
 ```
 
-3. **For visual downbeat selection** (`--manual-downbeats`), you need a GUI backend:
+3. **For visual downbeat selection** (`--manual-downbeats`) and **interactive beatgrid alignment** (`--interactive-beats`), you need a GUI backend:
 
 **Option A: tkinter (recommended, usually pre-installed)**
 ```bash
@@ -44,6 +44,12 @@ sudo apt-get install python3-tk
 ```bash
 pip install PyQt5
 ```
+
+4. **For audio playback during interactive alignment** (optional but recommended):
+```bash
+pip install sounddevice
+```
+This enables the "Play Section" button in the interactive beatgrid alignment tool.
 
 Note: Installing librosa may take a few minutes as it has several dependencies including scipy and scikit-learn.
 
@@ -380,8 +386,14 @@ The project is organized into modular components:
 **"No working GUI backend found" or "tkinter not installed"**
 - Install tkinter: `sudo apt-get install python3-tk` (Ubuntu/Debian)
 - Alternative: `pip install PyQt5` 
-- Visual downbeat selection requires a GUI backend
+- Visual downbeat selection and interactive beatgrid alignment require a GUI backend
 - The tool will automatically fall back to automatic detection
+
+**"Audio playback not available" during interactive alignment**
+- Install sounddevice: `pip install sounddevice`
+- On Linux, you may also need: `sudo apt-get install portaudio19-dev python3-dev`
+- Audio playback is optional - alignment still works without it
+- The "Play Section" button helps with precise manual alignment
 
 ## Example Test
 
