@@ -814,14 +814,12 @@ class BeatgridAligner:
             
             print(f"Playing {track_name} section from {self.playback_position:.1f}s...")
             
-            # Start non-blocking playback with callback
+            # Start non-blocking playback
             audio_to_play = self.playback_audio[start_sample:]
-            self.playback_stream = sd.play(
-                audio_to_play, 
-                samplerate=self.playback_sr,
-                callback=self._audio_callback,
-                finished_callback=self._playback_finished
-            )
+            sd.play(audio_to_play, samplerate=self.playback_sr)
+            
+            # Store a reference for stopping if needed
+            self.playback_stream = True  # Simple flag to indicate playback is active
             
             # Start visual indicator thread with lower frequency updates
             self.playback_thread = threading.Thread(target=self._update_playback_indicator)
@@ -855,11 +853,8 @@ class BeatgridAligner:
             self.is_playing = False
             
             # Stop audio stream
-            if self.playback_stream is not None:
-                self.playback_stream.stop()
-                self.playback_stream = None
-            else:
-                sd.stop()
+            sd.stop()  # This stops all sounddevice playback
+            self.playback_stream = None
             
             # Clean up playback line
             if self.playback_line:
@@ -887,25 +882,6 @@ class BeatgridAligner:
         except Exception as e:
             print(f"Error resetting UI: {e}")
     
-    def _audio_callback(self, outdata, frames, time, status):
-        """Audio stream callback - handles any audio stream issues"""
-        if status:
-            print(f"Audio callback status: {status}")
-    
-    def _playback_finished(self):
-        """Called when playback finishes naturally"""
-        self.is_playing = False
-        self.playback_position = 0.0
-        self._reset_playback_ui()
-        
-        # Clean up playback line
-        if self.playback_line:
-            try:
-                self.playback_line.remove()
-                self.playback_line = None
-                self.fig.canvas.draw_idle()
-            except:
-                pass
     
     def _next_step(self, event):
         """Advance to the next step in the workflow"""
@@ -1092,6 +1068,7 @@ class BeatgridAligner:
         
         while self.is_playing and not self.stop_playback_flag:
             try:
+                
                 # Calculate current playback position
                 current_time = time.time()
                 elapsed_since_start = current_time - self.playback_start_time
@@ -1104,6 +1081,10 @@ class BeatgridAligner:
                 # Check if playback finished
                 max_duration = len(self.playback_audio) / self.playback_sr
                 if self.playback_position >= max_duration or self.stop_playback_flag:
+                    # Playback completed naturally
+                    self.is_playing = False
+                    self.playback_position = 0.0
+                    self._reset_playback_ui()
                     break
                 
                 # Convert playback position to measures
