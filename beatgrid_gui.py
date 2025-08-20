@@ -26,16 +26,29 @@ class BeatgridAligner:
         self.track2_start_sample = track2_start_sample
         self.transition_duration = transition_duration
         
-        # Calculate display parameters
-        self.display_duration = transition_duration
+        # Calculate display parameters - show only first 4 measures for clarity
+        beats_per_measure = 4
+        measures_to_show = 4
+        beats_per_second = track1.bpm / 60.0
+        self.display_duration = (measures_to_show * beats_per_measure) / beats_per_second
+        
+        # Don't exceed the actual transition duration
+        self.display_duration = min(self.display_duration, transition_duration)
         self.sr = track1.sr
         
-        # Time axis for the transition
-        self.time_axis = np.linspace(0, self.display_duration, len(track1_outro))
+        # Calculate the number of samples for the display duration
+        display_samples = int(self.display_duration * self.sr)
         
-        # Convert beat positions to time within the transition window
-        self.track1_beats_in_transition = self._get_beats_in_transition(track1, outro_start, len(track1_outro))
-        self.track2_beats_in_transition = self._get_beats_in_transition(track2, track2_start_sample, len(track2_intro))
+        # Truncate audio to display duration
+        self.track1_outro_display = track1_outro[:display_samples] if len(track1_outro) > display_samples else track1_outro
+        self.track2_intro_display = track2_intro[:display_samples] if len(track2_intro) > display_samples else track2_intro
+        
+        # Time axis for the display
+        self.time_axis = np.linspace(0, self.display_duration, len(self.track1_outro_display))
+        
+        # Convert beat positions to time within the display window
+        self.track1_beats_in_transition = self._get_beats_in_transition(track1, outro_start, display_samples)
+        self.track2_beats_in_transition = self._get_beats_in_transition(track2, track2_start_sample, display_samples)
         
         # Track2 alignment offset (user adjustable)
         self.track2_offset = 0.0  # seconds
@@ -89,11 +102,11 @@ class BeatgridAligner:
             gridspec_kw={'height_ratios': [5, 1]}
         )
         
-        # Plot both waveforms
-        self.ax_wave.plot(self.time_axis, self.track1_outro, color='blue', alpha=0.6, linewidth=0.8, label=f'Track 1: {self.track1.filepath.name}')
-        self.ax_wave.plot(self.time_axis, self.track2_intro, color='red', alpha=0.6, linewidth=0.8, label=f'Track 2: {self.track2.filepath.name}')
+        # Plot both waveforms (using display-truncated versions)
+        self.ax_wave.plot(self.time_axis, self.track1_outro_display, color='blue', alpha=0.6, linewidth=0.8, label=f'Track 1: {self.track1.filepath.name}')
+        self.ax_wave.plot(self.time_axis, self.track2_intro_display, color='red', alpha=0.6, linewidth=0.8, label=f'Track 2: {self.track2.filepath.name}')
         
-        self.ax_wave.set_title(f'Interactive Beatgrid Alignment - Transition ({self.transition_duration:.1f}s)', 
+        self.ax_wave.set_title(f'Interactive Beatgrid Alignment - First 4 Measures ({self.display_duration:.1f}s)', 
                               fontsize=14, fontweight='bold')
         self.ax_wave.set_xlabel('Time (seconds)', fontsize=12)
         self.ax_wave.set_ylabel('Amplitude', fontsize=12)
@@ -105,13 +118,13 @@ class BeatgridAligner:
         
         # Instructions
         instruction_text = (
-            f"Beatgrid Alignment - Transition between tracks:\\n"
+            f"Beatgrid Alignment - First 4 Measures of Transition:\\n"
             f"• Blue waveform: {self.track1.filepath.name} (BPM: {self.track1.bpm:.1f})\\n"
             f"• Red waveform: {self.track2.filepath.name} (BPM: {self.track2.bpm:.1f})\\n"
             f"• Blue lines: Track 1 beats (reference) | Purple lines: Track 1 downbeats\\n"
             f"• Orange lines: Track 2 beats (adjustable) | Green lines: Track 2 downbeats\\n"
-            f"• Click and drag the orange/green lines to align Track 2 with Track 1\\n"
-            f"• Perfect alignment = all beats and downbeats line up vertically"
+            f"• Click ANYWHERE on the waveform and drag left/right to align Track 2\\n"
+            f"• Perfect alignment = all orange/green lines align with blue/purple lines"
         )
         
         self.ax_controls.text(0.02, 0.95, instruction_text, 
@@ -232,41 +245,32 @@ class BeatgridAligner:
         self.cancel_btn.on_clicked(self._cancel_alignment)
     
     def _on_press(self, event):
-        """Handle mouse press for dragging"""
+        """Handle mouse press for dragging - allow clicking anywhere on waveform"""
         if event.inaxes != self.ax_wave or event.button != 1:
             return
         
-        # Check if clicking near a track2 beat line
-        if len(self.track2_beats_in_transition) > 0:
-            track2_beats_offset = self.track2_beats_in_transition + self.track2_offset
-            valid_beats = track2_beats_offset[
-                (track2_beats_offset >= 0) & (track2_beats_offset <= self.display_duration)
-            ]
-            
-            if len(valid_beats) > 0:
-                distances = np.abs(valid_beats - event.xdata)
-                if np.min(distances) < 0.1:  # Within 0.1 seconds
-                    self.dragging = True
-                    print(f"Started dragging at {event.xdata:.3f}s")
+        # Allow dragging from anywhere on the waveform for easier interaction
+        self.dragging = True
+        self.drag_start_x = event.xdata
+        self.drag_start_offset = self.track2_offset
+        print(f"Started dragging at {event.xdata:.3f}s (current offset: {self.track2_offset:.3f}s)")
     
     def _on_motion(self, event):
         """Handle mouse motion for dragging"""
-        if not self.dragging or event.inaxes != self.ax_wave:
+        if not self.dragging or event.inaxes != self.ax_wave or event.xdata is None:
             return
         
-        # Calculate new offset based on mouse position
-        if len(self.track2_beats_in_transition) > 0:
-            # Find the reference beat position (without offset)
-            reference_beat = self.track2_beats_in_transition[0]  # Use first beat as reference
-            new_offset = event.xdata - reference_beat
-            
-            # Limit offset to reasonable range
-            max_offset = self.display_duration * 0.5
-            new_offset = np.clip(new_offset, -max_offset, max_offset)
-            
-            if abs(new_offset - self.track2_offset) > 0.001:  # Only update if significant change
-                self.track2_offset = new_offset
-                self._draw_beatgrids()
+        # Calculate offset change based on mouse movement
+        mouse_delta = event.xdata - self.drag_start_x
+        new_offset = self.drag_start_offset + mouse_delta
+        
+        # Limit offset to reasonable range
+        max_offset = self.display_duration * 0.5
+        new_offset = np.clip(new_offset, -max_offset, max_offset)
+        
+        if abs(new_offset - self.track2_offset) > 0.001:  # Only update if significant change
+            self.track2_offset = new_offset
+            self._draw_beatgrids()
     
     def _on_release(self, event):
         """Handle mouse release to stop dragging"""
