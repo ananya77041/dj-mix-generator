@@ -1047,7 +1047,7 @@ class MixGenerator:
         
         print(f"  Enhanced crossfade complete with professional quality processing!")
         
-        return transition, track2.audio, track2.audio, track2
+        return transition, track2.audio, track2
     
     def _create_crossfade(self, track1: Track, track2: Track, transition_duration: float) -> Tuple[np.ndarray, np.ndarray, Track]:
         """Create crossfade transition between two tempo-matched tracks
@@ -1203,7 +1203,7 @@ class MixGenerator:
         
         return transition, track2.audio, track2
     
-    def _create_fallback_transition(self, track1: Track, track2: Track, transition_duration: float) -> Tuple[np.ndarray, Track]:
+    def _create_fallback_transition(self, track1: Track, track2: Track, transition_duration: float) -> Tuple[np.ndarray, np.ndarray, Track]:
         """
         Fallback transition method using simple time-based alignment
         Used when downbeat alignment fails
