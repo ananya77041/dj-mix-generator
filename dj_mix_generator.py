@@ -16,12 +16,13 @@ from models import Track
 class DJMixGenerator:
     """Main DJ Mix Generator class that coordinates audio analysis and mix generation"""
     
-    def __init__(self, use_cache: bool = True, manual_downbeats: bool = False, allow_irregular_tempo: bool = False, tempo_strategy: str = "sequential"):
+    def __init__(self, use_cache: bool = True, manual_downbeats: bool = False, allow_irregular_tempo: bool = False, tempo_strategy: str = "sequential", interactive_beats: bool = False):
         self.tracks: List[Track] = []
         self.analyzer = AudioAnalyzer(use_cache=use_cache, manual_downbeats=manual_downbeats, allow_irregular_tempo=allow_irregular_tempo)
-        self.mixer = MixGenerator(tempo_strategy=tempo_strategy)
+        self.mixer = MixGenerator(tempo_strategy=tempo_strategy, interactive_beats=interactive_beats)
         self.key_matcher = KeyMatcher()
         self.tempo_strategy = tempo_strategy
+        self.interactive_beats = interactive_beats
     
     def load_playlist(self, filepaths: List[str]):
         """Load and analyze all tracks in the playlist"""
@@ -116,6 +117,7 @@ def main():
         print("  --tempo-strategy=MODE  Tempo alignment strategy: 'sequential' or 'uniform' (default: sequential)")
         print("  --transition-measures=N Transition length in measures (default: 8, overrides seconds)")
         print("  --transition-seconds=N  Transition length in seconds (default: 30, used if measures not specified)")
+        print("  --interactive-beats     Use interactive beatgrid alignment GUI for transitions")
         print("  --no-cache             Disable track analysis caching")
         print("  --cache-info           Show cache information and exit")
         print("  --clear-cache          Clear track analysis cache and exit")
@@ -131,6 +133,7 @@ def main():
     tempo_strategy = "sequential"
     transition_measures = None
     transition_seconds = 30.0
+    interactive_beats = False
     playlist = []
     output_path = "dj_mix.wav"
     
@@ -184,6 +187,10 @@ def main():
             use_cache = False
             args.remove("--no-cache")
         
+        if "--interactive-beats" in args:
+            interactive_beats = True
+            args.remove("--interactive-beats")
+        
         # Check for tempo strategy
         tempo_strategy_args = [arg for arg in args if arg.startswith("--tempo-strategy=")]
         if tempo_strategy_args:
@@ -227,7 +234,7 @@ def main():
             return 1
     
     try:
-        dj = DJMixGenerator(use_cache=use_cache, manual_downbeats=manual_downbeats, allow_irregular_tempo=allow_irregular_tempo, tempo_strategy=tempo_strategy)
+        dj = DJMixGenerator(use_cache=use_cache, manual_downbeats=manual_downbeats, allow_irregular_tempo=allow_irregular_tempo, tempo_strategy=tempo_strategy, interactive_beats=interactive_beats)
         dj.load_playlist(playlist)
         
         # Optionally reorder by key

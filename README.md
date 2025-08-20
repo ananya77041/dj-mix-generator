@@ -138,6 +138,30 @@ The GUI opens for each track during analysis, allowing you to:
 
 Manual selections are cached separately from automatic detection!
 
+### Interactive Beatgrid Alignment
+
+For ultimate precision in beat matching, use interactive beatgrid alignment:
+
+```bash
+python dj_mix_generator.py --interactive-beats track1.wav track2.wav track3.wav
+```
+
+**Visual Beatgrid Interface:**
+- Shows waveforms of both tracks overlaid during each transition
+- **Blue lines**: Track 1 beats (reference, fixed)
+- **Purple lines**: Track 1 downbeats (reference, fixed)  
+- **Orange lines**: Track 2 beats (draggable for alignment)
+- **Green lines**: Track 2 downbeats (draggable for alignment)
+- **Real-time feedback**: Alignment quality shown in milliseconds
+
+**Interactive Features:**
+- **Click & Drag**: Click near orange/green lines and drag to align
+- **Auto-Align**: Automatically find the best alignment
+- **Reset**: Return to original computer-detected alignment
+- **Live Preview**: See alignment quality update in real-time
+
+Perfect for fine-tuning transitions when automatic detection isn't quite right!
+
 ### Tempo Alignment Strategies
 
 Choose between two tempo alignment strategies:
@@ -372,6 +396,9 @@ python dj_mix_generator.py --manual-downbeats your_track1.wav your_track2.wav yo
 # Combine options
 python dj_mix_generator.py --reorder-by-key --transitions-only --transition-measures=16 your_track1.wav your_track2.wav your_track3.wav
 python dj_mix_generator.py --manual-downbeats --reorder-by-key --tempo-strategy=uniform --transition-measures=12 your_track1.wav your_track2.wav
+
+# Ultimate precision: manual downbeats + interactive beatgrid alignment
+python dj_mix_generator.py --manual-downbeats --interactive-beats --transition-measures=8 your_track1.wav your_track2.wav
 
 # Output files: dj_mix.wav (full mix) or dj_transitions_preview.wav (transitions only)
 ```

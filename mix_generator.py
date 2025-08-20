@@ -15,10 +15,11 @@ from beat_utils import BeatAligner
 class MixGenerator:
     """Handles DJ mix generation with transitions and beatmatching"""
     
-    def __init__(self, tempo_strategy: str = "sequential"):
-        self.beat_aligner = BeatAligner()
+    def __init__(self, tempo_strategy: str = "sequential", interactive_beats: bool = False):
+        self.beat_aligner = BeatAligner(interactive_beats=interactive_beats)
         self.tempo_strategy = tempo_strategy
         self.target_bpm = None  # Will be set based on strategy
+        self.interactive_beats = interactive_beats
     
     def measures_to_samples(self, measures: int, bpm: float, sr: int, beats_per_measure: int = 4) -> int:
         """Convert measures to audio samples based on BPM and sample rate"""

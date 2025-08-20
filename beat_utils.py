@@ -12,8 +12,8 @@ from models import Track
 class BeatAligner:
     """Handles precise beat and downbeat alignment for seamless transitions"""
     
-    def __init__(self):
-        pass
+    def __init__(self, interactive_beats: bool = False):
+        self.interactive_beats = interactive_beats
     
     def find_optimal_transition_points(self, track1: Track, track2: Track, 
                                      transition_duration: float) -> Tuple[int, int]:
@@ -187,7 +187,7 @@ class BeatAligner:
         
         # Apply perfect beat-by-beat alignment throughout the transition
         track1_outro_aligned, track2_intro_aligned = self._apply_beat_by_beat_alignment(
-            track1, track2, track1_outro, track2_intro, outro_start, track2_start_sample
+            track1, track2, track1_outro, track2_intro, outro_start, track2_start_sample, transition_duration
         )
         
         # Verify alignment quality
@@ -197,13 +197,104 @@ class BeatAligner:
     
     def _apply_beat_by_beat_alignment(self, track1: Track, track2: Track, 
                                     track1_outro: np.ndarray, track2_intro: np.ndarray,
-                                    outro_start: int, track2_start_sample: int) -> Tuple[np.ndarray, np.ndarray]:
+                                    outro_start: int, track2_start_sample: int, transition_duration: float) -> Tuple[np.ndarray, np.ndarray]:
         """
         Apply perfect beat-by-beat alignment throughout the transition period.
         Uses micro-stretching and phase alignment to ensure every beat matches.
         """
         try:
-            print("  Applying perfect beat-by-beat alignment...")
+            # Check if interactive alignment is requested via environment variable or manual mode
+            use_interactive_alignment = self._should_use_interactive_alignment()
+            
+            if use_interactive_alignment:
+                return self._apply_interactive_alignment(
+                    track1, track2, track1_outro, track2_intro, outro_start, track2_start_sample, transition_duration
+                )
+            else:
+                return self._apply_automatic_alignment(
+                    track1, track2, track1_outro, track2_intro, outro_start, track2_start_sample
+                )
+                
+        except Exception as e:
+            print(f"  Warning: Beat-by-beat alignment failed: {e}")
+            print("  Using original audio segments")
+            return track1_outro, track2_intro
+    
+    def _should_use_interactive_alignment(self) -> bool:
+        """Determine if interactive beatgrid alignment should be used"""
+        return self.interactive_beats
+    
+    def _apply_interactive_alignment(self, track1: Track, track2: Track, 
+                                   track1_outro: np.ndarray, track2_intro: np.ndarray,
+                                   outro_start: int, track2_start_sample: int, 
+                                   transition_duration: float) -> Tuple[np.ndarray, np.ndarray]:
+        """Apply interactive beatgrid alignment using GUI"""
+        try:
+            from beatgrid_gui import align_beatgrids_interactive
+            
+            print("  Opening interactive beatgrid alignment...")
+            
+            # Get user's alignment offset
+            offset = align_beatgrids_interactive(
+                track1, track2, track1_outro, track2_intro,
+                outro_start, track2_start_sample, transition_duration
+            )
+            
+            if offset != 0.0:
+                print(f"  Applying user alignment: {offset:.3f}s offset")
+                
+                # Apply the offset to track2_intro by time-shifting
+                track2_intro_aligned = self._apply_time_offset(track2_intro, offset, track1.sr)
+                
+                # Ensure both tracks are the same length
+                min_length = min(len(track1_outro), len(track2_intro_aligned))
+                return track1_outro[:min_length], track2_intro_aligned[:min_length]
+            else:
+                print("  No offset applied, using automatic alignment")
+                return self._apply_automatic_alignment(
+                    track1, track2, track1_outro, track2_intro, outro_start, track2_start_sample
+                )
+                
+        except ImportError:
+            print("  Interactive alignment not available, using automatic alignment")
+            return self._apply_automatic_alignment(
+                track1, track2, track1_outro, track2_intro, outro_start, track2_start_sample
+            )
+        except Exception as e:
+            print(f"  Interactive alignment failed: {e}")
+            print("  Falling back to automatic alignment")
+            return self._apply_automatic_alignment(
+                track1, track2, track1_outro, track2_intro, outro_start, track2_start_sample
+            )
+    
+    def _apply_time_offset(self, audio: np.ndarray, offset_seconds: float, sr: int) -> np.ndarray:
+        """Apply a time offset to audio by shifting and padding/cropping"""
+        offset_samples = int(offset_seconds * sr)
+        
+        if offset_samples == 0:
+            return audio
+        elif offset_samples > 0:
+            # Positive offset: delay the audio (pad beginning, crop end)
+            padding = np.zeros(offset_samples)
+            shifted_audio = np.concatenate([padding, audio])
+            return shifted_audio[:len(audio)]  # Keep original length
+        else:
+            # Negative offset: advance the audio (crop beginning, pad end)
+            offset_samples = abs(offset_samples)
+            if offset_samples < len(audio):
+                cropped_audio = audio[offset_samples:]
+                padding = np.zeros(offset_samples)
+                return np.concatenate([cropped_audio, padding])
+            else:
+                # Offset larger than audio length, return silence
+                return np.zeros_like(audio)
+    
+    def _apply_automatic_alignment(self, track1: Track, track2: Track, 
+                                 track1_outro: np.ndarray, track2_intro: np.ndarray,
+                                 outro_start: int, track2_start_sample: int) -> Tuple[np.ndarray, np.ndarray]:
+        """Apply automatic beat-by-beat alignment (original method)"""
+        try:
+            print("  Applying automatic beat-by-beat alignment...")
             
             # Convert beat positions to samples relative to the segments
             track1_downbeats_samples = librosa.frames_to_samples(track1.downbeats, hop_length=512)
@@ -222,19 +313,8 @@ class BeatAligner:
                 (track2_beats_samples <= track2_start_sample + len(track2_intro))
             ] - track2_start_sample  # Make relative to segment start
             
-            # Find downbeats within the transition segments
-            track1_segment_downbeats = track1_downbeats_samples[
-                (track1_downbeats_samples >= outro_start) & 
-                (track1_downbeats_samples <= outro_start + len(track1_outro))
-            ] - outro_start
-            
-            track2_segment_downbeats = track2_downbeats_samples[
-                (track2_downbeats_samples >= track2_start_sample) & 
-                (track2_downbeats_samples <= track2_start_sample + len(track2_intro))
-            ] - track2_start_sample
-            
             if len(track1_segment_beats) == 0 or len(track2_segment_beats) == 0:
-                print("  Warning: No beats found in transition segments, using original audio")
+                print("    Warning: No beats found in transition segments, using original audio")
                 return track1_outro, track2_intro
             
             # Create ideal beat grid based on track1's tempo (the reference)
@@ -242,7 +322,6 @@ class BeatAligner:
             samples_per_beat = track1.sr / beats_per_second
             
             # Generate ideal beat positions for the transition duration
-            segment_duration = len(track1_outro) / track1.sr
             ideal_beat_positions = []
             
             # Start from the first detected beat position for phase consistency
@@ -257,7 +336,7 @@ class BeatAligner:
             ideal_beat_positions = np.array(ideal_beat_positions)
             
             if len(ideal_beat_positions) == 0:
-                print("  Warning: No ideal beats generated, using original audio")
+                print("    Warning: No ideal beats generated, using original audio")
                 return track1_outro, track2_intro
             
             print(f"    Track1 beats in segment: {len(track1_segment_beats)}")
@@ -279,8 +358,8 @@ class BeatAligner:
             return track1_outro_final, track2_intro_final
             
         except Exception as e:
-            print(f"  Warning: Beat-by-beat alignment failed: {e}")
-            print("  Using original audio segments")
+            print(f"    Warning: Automatic alignment failed: {e}")
+            print("    Using original audio segments")
             return track1_outro, track2_intro
     
     def _micro_stretch_to_beat_grid(self, audio: np.ndarray, detected_beats: np.ndarray, 
