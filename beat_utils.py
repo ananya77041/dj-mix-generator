@@ -45,55 +45,59 @@ class BeatAligner:
                                       transition_samples: int) -> int:
         """
         Ensure perfect downbeat alignment between tracks during transition.
-        Adjusts track2 start position so its downbeat aligns with track1's ending downbeat.
+        Both tracks' downbeats must hit simultaneously throughout the transition.
         """
-        # Calculate the beat interval for the aligned tracks (both should have same BPM after stretching)
-        beats_per_second = track1.bpm / 60.0
-        samples_per_beat = track1.sr / beats_per_second
-        
-        # Find track1's outro start position (where transition begins)
-        track1_outro_start = track1_end_sample - transition_samples
-        
-        # Calculate where track2's first downbeat should land in the transition timeline
-        # It should align exactly with track1's ending downbeat
-        target_alignment_position = track1_end_sample
-        
-        # Find the optimal track2 start position that will make its downbeat align perfectly
-        # We need to work backwards from where we want the downbeat to land
-        
-        # Get track2's beats relative to its start
-        if len(track2.downbeats) > 0:
-            # Find the first suitable downbeat in track2
-            first_downbeat_frame = None
-            min_intro_time = 2.0  # Skip first 2 seconds as in _find_intro_downbeat
-            min_intro_frame = librosa.time_to_frames(min_intro_time, sr=track2.sr, hop_length=512)
-            
-            suitable_downbeats = track2.downbeats[track2.downbeats >= min_intro_frame]
-            if len(suitable_downbeats) > 0:
-                first_downbeat_frame = suitable_downbeats[0]
-            else:
-                first_downbeat_frame = track2.downbeats[0] if len(track2.downbeats) > 0 else 0
-            
-            # Convert downbeat frame to sample position
-            first_downbeat_sample = librosa.frames_to_samples(first_downbeat_frame, hop_length=512)
-            
-            # Calculate where track2 should start so its downbeat aligns with target
-            # If track2 starts at position X, its first downbeat will be at position X + first_downbeat_sample
-            # We want: X + first_downbeat_sample = target_alignment_position
-            # Therefore: X = target_alignment_position - first_downbeat_sample
-            optimal_track2_start = target_alignment_position - first_downbeat_sample
-            
-            # Ensure the start position is not negative and not too late in track2
-            optimal_track2_start = max(0, optimal_track2_start)
-            optimal_track2_start = min(optimal_track2_start, len(track2.audio) - transition_samples)
-            
-            print(f"  Perfect downbeat alignment: track2 adjusted by {(optimal_track2_start - track2_start_sample)/track2.sr:.3f}s")
-            
-            return optimal_track2_start
-        else:
-            # No downbeats detected, use original position
-            print("  Warning: No downbeats detected in track2, using original alignment")
+        if len(track1.downbeats) == 0 or len(track2.downbeats) == 0:
+            print("  Warning: Missing downbeats, using original alignment")
             return track2_start_sample
+        
+        # Find track1's downbeats that occur during the transition
+        track1_outro_start = track1_end_sample - transition_samples
+        track1_downbeats_samples = librosa.frames_to_samples(track1.downbeats, hop_length=512)
+        
+        # Get track1's downbeats within the transition window
+        track1_transition_downbeats = track1_downbeats_samples[
+            (track1_downbeats_samples >= track1_outro_start) & 
+            (track1_downbeats_samples <= track1_end_sample)
+        ]
+        
+        if len(track1_transition_downbeats) == 0:
+            print("  Warning: No track1 downbeats in transition window, using original alignment")
+            return track2_start_sample
+        
+        # Find track2's first suitable downbeat
+        min_intro_time = 2.0  # Skip first 2 seconds
+        min_intro_frame = librosa.time_to_frames(min_intro_time, sr=track2.sr, hop_length=512)
+        
+        suitable_downbeats = track2.downbeats[track2.downbeats >= min_intro_frame]
+        if len(suitable_downbeats) == 0:
+            suitable_downbeats = track2.downbeats  # Use any downbeat if none after 2s
+        
+        first_downbeat_frame = suitable_downbeats[0]
+        first_downbeat_sample = librosa.frames_to_samples(first_downbeat_frame, hop_length=512)
+        
+        # Choose a track1 downbeat to align with (prefer one in the middle of transition)
+        target_track1_downbeat = track1_transition_downbeats[len(track1_transition_downbeats)//2]
+        
+        # Calculate track2 start position so its downbeat coincides with track1's downbeat
+        # We want: track2_start + first_downbeat_sample = target_track1_downbeat
+        # Therefore: track2_start = target_track1_downbeat - first_downbeat_sample
+        optimal_track2_start = target_track1_downbeat - first_downbeat_sample
+        
+        # Ensure valid position
+        optimal_track2_start = max(0, optimal_track2_start)
+        optimal_track2_start = min(optimal_track2_start, len(track2.audio) - transition_samples)
+        
+        # Calculate the timing adjustment
+        adjustment_seconds = (optimal_track2_start - track2_start_sample) / track2.sr
+        target_time = target_track1_downbeat / track1.sr
+        
+        print(f"  Simultaneous downbeat alignment:")
+        print(f"    Track1 downbeat at: {target_time:.3f}s")
+        print(f"    Track2 adjusted by: {adjustment_seconds:.3f}s")
+        print(f"    Downbeats will hit simultaneously during transition")
+        
+        return optimal_track2_start
     
     def _find_outro_downbeat(self, track: Track, transition_samples: int) -> int:
         """
@@ -190,46 +194,58 @@ class BeatAligner:
     def _verify_downbeat_alignment(self, track1: Track, track2: Track, 
                                  track1_end_sample: int, track2_start_sample: int, 
                                  transition_length: int):
-        """Verify and report downbeat alignment quality for debugging"""
+        """Verify and report simultaneous downbeat alignment quality for debugging"""
         try:
-            # Check if track1's ending and track2's starting downbeats are properly aligned
             outro_start = max(0, track1_end_sample - transition_length)
             
-            # Find the actual downbeat positions relative to the transition
+            # Find downbeats in both tracks during the transition
             track1_downbeats_samples = librosa.frames_to_samples(track1.downbeats, hop_length=512)
             track2_downbeats_samples = librosa.frames_to_samples(track2.downbeats, hop_length=512)
             
-            # Find track1's ending downbeat
-            track1_ending_downbeats = track1_downbeats_samples[
+            # Track1 downbeats during transition
+            track1_transition_downbeats = track1_downbeats_samples[
                 (track1_downbeats_samples >= outro_start) & 
                 (track1_downbeats_samples <= track1_end_sample)
             ]
             
-            # Find track2's starting downbeat relative to its start position
-            track2_starting_downbeats = track2_downbeats_samples[
-                (track2_downbeats_samples >= track2_start_sample) & 
-                (track2_downbeats_samples <= track2_start_sample + transition_length)
+            # Track2 downbeats during transition (adjusted for start position)
+            track2_absolute_downbeats = track2_downbeats_samples + track2_start_sample
+            track2_transition_downbeats = track2_absolute_downbeats[
+                (track2_absolute_downbeats >= outro_start) & 
+                (track2_absolute_downbeats <= track1_end_sample)
             ]
             
-            if len(track1_ending_downbeats) > 0 and len(track2_starting_downbeats) > 0:
-                # Calculate the timing difference
-                track1_last_downbeat = track1_ending_downbeats[-1]
-                track2_first_downbeat = track2_starting_downbeats[0]
+            if len(track1_transition_downbeats) > 0 and len(track2_transition_downbeats) > 0:
+                # Find the closest downbeat pairs and check alignment
+                min_offset = float('inf')
+                best_alignment = None
                 
-                # In the transition, track1's downbeat should align with track2's downbeat
-                expected_alignment = track1_end_sample
-                actual_track2_downbeat_in_mix = track2_first_downbeat
+                for t1_beat in track1_transition_downbeats:
+                    for t2_beat in track2_transition_downbeats:
+                        offset = abs(t1_beat - t2_beat) / track1.sr
+                        if offset < min_offset:
+                            min_offset = offset
+                            best_alignment = (t1_beat, t2_beat)
                 
-                alignment_offset = abs(expected_alignment - actual_track2_downbeat_in_mix) / track1.sr
-                
-                if alignment_offset < 0.01:  # Within 10ms
-                    print(f"  ✓ Perfect downbeat alignment: {alignment_offset*1000:.1f}ms offset")
-                elif alignment_offset < 0.05:  # Within 50ms  
-                    print(f"  ✓ Good downbeat alignment: {alignment_offset*1000:.1f}ms offset")
+                if best_alignment:
+                    t1_time = best_alignment[0] / track1.sr
+                    t2_time = best_alignment[1] / track1.sr
+                    
+                    if min_offset < 0.01:  # Within 10ms
+                        print(f"  ✓ Perfect simultaneous alignment: {min_offset*1000:.1f}ms offset")
+                        print(f"    Track1 downbeat: {t1_time:.3f}s, Track2 downbeat: {t2_time:.3f}s")
+                    elif min_offset < 0.05:  # Within 50ms  
+                        print(f"  ✓ Good simultaneous alignment: {min_offset*1000:.1f}ms offset")
+                        print(f"    Track1 downbeat: {t1_time:.3f}s, Track2 downbeat: {t2_time:.3f}s")
+                    else:
+                        print(f"  ⚠ Alignment warning: {min_offset*1000:.1f}ms offset")
+                        print(f"    Track1 downbeat: {t1_time:.3f}s, Track2 downbeat: {t2_time:.3f}s")
                 else:
-                    print(f"  ⚠ Downbeat alignment warning: {alignment_offset*1000:.1f}ms offset")
+                    print("  ⚠ Could not find matching downbeat pairs")
             else:
                 print("  ⚠ Could not verify downbeat alignment (no downbeats in transition zone)")
+                print(f"    Track1 downbeats in transition: {len(track1_transition_downbeats)}")
+                print(f"    Track2 downbeats in transition: {len(track2_transition_downbeats)}")
                 
         except Exception as e:
             print(f"  Warning: Downbeat alignment verification failed: {e}")
