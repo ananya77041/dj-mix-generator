@@ -233,6 +233,7 @@ class BeatAligner:
             from beatgrid_gui import align_beatgrids_interactive
             
             print("  Opening interactive beatgrid alignment...")
+            print("  Note: Tracks are already tempo-matched for optimal user experience")
             
             # Get user's alignment offset
             offset = align_beatgrids_interactive(

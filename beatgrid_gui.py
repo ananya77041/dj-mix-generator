@@ -95,36 +95,52 @@ class BeatgridAligner:
             return np.array([])
     
     def _setup_plot(self):
-        """Setup the matplotlib plot with waveforms and beatgrids"""
-        # Create figure with subplots
-        self.fig, (self.ax_wave, self.ax_controls) = plt.subplots(
-            2, 1, figsize=(16, 10), 
-            gridspec_kw={'height_ratios': [5, 1]}
+        """Setup the matplotlib plot with stacked waveforms and spanning beatgrids"""
+        # Create figure with subplots: track1, track2, controls
+        self.fig, (self.ax_track1, self.ax_track2, self.ax_controls) = plt.subplots(
+            3, 1, figsize=(16, 12), 
+            gridspec_kw={'height_ratios': [2.5, 2.5, 1]}
         )
         
-        # Plot both waveforms (using display-truncated versions)
-        self.ax_wave.plot(self.time_axis, self.track1_outro_display, color='blue', alpha=0.6, linewidth=0.8, label=f'Track 1: {self.track1.filepath.name}')
-        self.ax_wave.plot(self.time_axis, self.track2_intro_display, color='red', alpha=0.6, linewidth=0.8, label=f'Track 2: {self.track2.filepath.name}')
+        # Check if tracks are tempo-matched
+        tempo_matched = abs(self.track1.bpm - self.track2.bpm) < 0.1
+        tempo_status = "Tempo-Matched" if tempo_matched else f"BPM: {self.track1.bpm:.1f}"
         
-        self.ax_wave.set_title(f'Interactive Beatgrid Alignment - First 4 Measures ({self.display_duration:.1f}s)', 
-                              fontsize=14, fontweight='bold')
-        self.ax_wave.set_xlabel('Time (seconds)', fontsize=12)
-        self.ax_wave.set_ylabel('Amplitude', fontsize=12)
-        self.ax_wave.grid(True, alpha=0.3)
-        self.ax_wave.legend(loc='upper right')
+        # Plot track1 waveform (reference)
+        self.ax_track1.plot(self.time_axis, self.track1_outro_display, color='blue', alpha=0.7, linewidth=1.0)
+        self.ax_track1.set_title(f'Track 1: {self.track1.filepath.name} (Reference - {tempo_status})', 
+                                fontsize=12, fontweight='bold', color='blue')
+        self.ax_track1.set_ylabel('Amplitude', fontsize=10)
+        self.ax_track1.grid(True, alpha=0.3)
+        self.ax_track1.set_xlim(0, self.display_duration)
+        
+        # Plot track2 waveform (adjustable)
+        self.ax_track2.plot(self.time_axis, self.track2_intro_display, color='red', alpha=0.7, linewidth=1.0)
+        tempo_status2 = "Tempo-Matched" if tempo_matched else f"BPM: {self.track2.bpm:.1f}"
+        self.ax_track2.set_title(f'Track 2: {self.track2.filepath.name} (Adjustable - {tempo_status2})', 
+                                fontsize=12, fontweight='bold', color='red')
+        self.ax_track2.set_xlabel('Time (seconds)', fontsize=12)
+        self.ax_track2.set_ylabel('Amplitude', fontsize=10)
+        self.ax_track2.grid(True, alpha=0.3)
+        self.ax_track2.set_xlim(0, self.display_duration)
+        
+        # Link the x-axes so they zoom/pan together
+        self.ax_track2.sharex(self.ax_track1)
         
         # Draw initial beatgrids
         self._draw_beatgrids()
         
         # Instructions
+        tempo_matched = abs(self.track1.bpm - self.track2.bpm) < 0.1
+        tempo_note = "Tracks are already tempo-matched - fine-tune beat alignment only" if tempo_matched else "Align beats between different tempo tracks"
+        
         instruction_text = (
-            f"Beatgrid Alignment - First 4 Measures of Transition:\\n"
-            f"• Blue waveform: {self.track1.filepath.name} (BPM: {self.track1.bpm:.1f})\\n"
-            f"• Red waveform: {self.track2.filepath.name} (BPM: {self.track2.bpm:.1f})\\n"
-            f"• Blue lines: Track 1 beats (reference) | Purple lines: Track 1 downbeats\\n"
-            f"• Orange lines: Track 2 beats (adjustable) | Green lines: Track 2 downbeats\\n"
-            f"• Click ANYWHERE on the waveform and drag left/right to align Track 2\\n"
-            f"• Perfect alignment = all orange/green lines align with blue/purple lines"
+            f"Beatgrid Alignment - First 4 Measures of Transition (Stacked View):\\n"
+            f"• {tempo_note}\\n"
+            f"• Top: Track 1 (reference) | Bottom: Track 2 (adjustable)\\n"
+            f"• Solid lines: Track 1 (blue=beats, purple=downbeats) | Dashed lines: Track 2 (orange=beats, green=downbeats)\\n"
+            f"• Click ANYWHERE on either waveform and drag left/right to align Track 2\\n"
+            f"• Perfect alignment = dashed lines align with solid lines"
         )
         
         self.ax_controls.text(0.02, 0.95, instruction_text, 
@@ -143,13 +159,18 @@ class BeatgridAligner:
         self.fig.canvas.mpl_connect('button_release_event', self._on_release)
         
         # Set window title
-        self.fig.canvas.manager.set_window_title('Beatgrid Alignment Tool')
+        self.fig.canvas.manager.set_window_title('Beatgrid Alignment Tool - Stacked View')
     
     def _draw_beatgrids(self):
-        """Draw the beatgrid lines for both tracks"""
-        # Clear existing beatgrid lines
-        for line in self.ax_wave.lines[2:]:  # Keep only the first 2 waveform lines
-            line.remove()
+        """Draw the beatgrid lines spanning across both tracks"""
+        # Clear existing beatgrid lines from both axes
+        for ax in [self.ax_track1, self.ax_track2]:
+            # Remove beat lines (keep only the waveform plot)
+            lines_to_remove = []
+            for line in ax.lines[1:]:  # Keep the first line (waveform)
+                lines_to_remove.append(line)
+            for line in lines_to_remove:
+                line.remove()
         
         # Get downbeats for both tracks
         track1_downbeats = self._get_downbeats_in_transition(self.track1, self.outro_start, len(self.track1_outro))
@@ -159,23 +180,30 @@ class BeatgridAligner:
         track2_beats_offset = self.track2_beats_in_transition + self.track2_offset
         track2_downbeats_offset = track2_downbeats + self.track2_offset
         
-        # Draw Track 1 beatgrid (reference - not movable)
+        # Draw Track 1 beatgrid (reference beats - blue lines spanning both plots)
         for beat_time in self.track1_beats_in_transition:
             if 0 <= beat_time <= self.display_duration:
-                self.ax_wave.axvline(x=beat_time, color='blue', alpha=0.7, linestyle='-', linewidth=2)
+                # Draw on both subplots to create spanning effect
+                self.ax_track1.axvline(x=beat_time, color='blue', alpha=0.6, linestyle='-', linewidth=1.5)
+                self.ax_track2.axvline(x=beat_time, color='blue', alpha=0.6, linestyle='-', linewidth=1.5)
         
+        # Draw Track 1 downbeats (reference downbeats - purple lines spanning both plots)
         for downbeat_time in track1_downbeats:
             if 0 <= downbeat_time <= self.display_duration:
-                self.ax_wave.axvline(x=downbeat_time, color='purple', alpha=0.8, linestyle='-', linewidth=3)
+                self.ax_track1.axvline(x=downbeat_time, color='purple', alpha=0.8, linestyle='-', linewidth=2.5)
+                self.ax_track2.axvline(x=downbeat_time, color='purple', alpha=0.8, linestyle='-', linewidth=2.5)
         
-        # Draw Track 2 beatgrid (adjustable)
+        # Draw Track 2 beatgrid (adjustable beats - orange lines spanning both plots)
         for beat_time in track2_beats_offset:
             if 0 <= beat_time <= self.display_duration:
-                self.ax_wave.axvline(x=beat_time, color='orange', alpha=0.7, linestyle='-', linewidth=2)
+                self.ax_track1.axvline(x=beat_time, color='orange', alpha=0.6, linestyle='--', linewidth=1.5)
+                self.ax_track2.axvline(x=beat_time, color='orange', alpha=0.6, linestyle='--', linewidth=1.5)
         
+        # Draw Track 2 downbeats (adjustable downbeats - green lines spanning both plots)
         for downbeat_time in track2_downbeats_offset:
             if 0 <= downbeat_time <= self.display_duration:
-                self.ax_wave.axvline(x=downbeat_time, color='green', alpha=0.8, linestyle='-', linewidth=3)
+                self.ax_track1.axvline(x=downbeat_time, color='green', alpha=0.8, linestyle='--', linewidth=2.5)
+                self.ax_track2.axvline(x=downbeat_time, color='green', alpha=0.8, linestyle='--', linewidth=2.5)
         
         # Add alignment quality indicator
         self._update_alignment_quality()
@@ -210,7 +238,7 @@ class BeatgridAligner:
         if matches > 0:
             avg_offset = total_offset / matches
             
-            # Update title with alignment quality
+            # Update track2 title with alignment quality
             if avg_offset < 5:
                 quality = "Excellent"
                 color = "green"
@@ -221,8 +249,10 @@ class BeatgridAligner:
                 quality = "Needs Improvement"
                 color = "red"
             
-            title = f'Interactive Beatgrid Alignment - {quality} ({avg_offset:.1f}ms avg offset)'
-            self.ax_wave.set_title(title, fontsize=14, fontweight='bold', color=color)
+            tempo_matched = abs(self.track1.bpm - self.track2.bpm) < 0.1
+            tempo_status = "Tempo-Matched" if tempo_matched else f"BPM: {self.track2.bpm:.1f}"
+            title = f'Track 2: {self.track2.filepath.name} ({tempo_status}) - {quality} Alignment ({avg_offset:.1f}ms)'
+            self.ax_track2.set_title(title, fontsize=12, fontweight='bold', color=color)
     
     def _add_buttons(self):
         """Add control buttons to the interface"""
@@ -245,19 +275,20 @@ class BeatgridAligner:
         self.cancel_btn.on_clicked(self._cancel_alignment)
     
     def _on_press(self, event):
-        """Handle mouse press for dragging - allow clicking anywhere on waveform"""
-        if event.inaxes != self.ax_wave or event.button != 1:
+        """Handle mouse press for dragging - allow clicking anywhere on either waveform"""
+        if event.inaxes not in [self.ax_track1, self.ax_track2] or event.button != 1:
             return
         
-        # Allow dragging from anywhere on the waveform for easier interaction
+        # Allow dragging from anywhere on either waveform for easier interaction
         self.dragging = True
         self.drag_start_x = event.xdata
         self.drag_start_offset = self.track2_offset
-        print(f"Started dragging at {event.xdata:.3f}s (current offset: {self.track2_offset:.3f}s)")
+        track_name = "Track 1" if event.inaxes == self.ax_track1 else "Track 2"
+        print(f"Started dragging at {event.xdata:.3f}s on {track_name} (current offset: {self.track2_offset:.3f}s)")
     
     def _on_motion(self, event):
         """Handle mouse motion for dragging"""
-        if not self.dragging or event.inaxes != self.ax_wave or event.xdata is None:
+        if not self.dragging or event.inaxes not in [self.ax_track1, self.ax_track2] or event.xdata is None:
             return
         
         # Calculate offset change based on mouse movement
