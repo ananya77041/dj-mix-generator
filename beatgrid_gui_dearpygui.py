@@ -89,53 +89,66 @@ class ProfessionalBeatgridAligner:
         
     def create_gui(self):
         """Create the professional GPU-accelerated beatgrid alignment interface"""
-        dpg.create_context()
-        
-        # Create professional dark theme
-        self._setup_theme()
-        
-        # Create main window
-        with dpg.window(label="Professional Beatgrid Alignment", 
-                       width=1400, height=900, tag="main_window"):
+        try:
+            dpg.create_context()
             
-            # Step indicator
-            self.step_indicator = dpg.add_text("STEP 1: Adjust Track 1 Beatgrid", 
-                                             color=(100, 200, 255))
+            # Create professional dark theme
+            self._setup_theme()
             
-            # Instructions panel
-            with dpg.collapsing_header(label="📋 Instructions", default_open=True):
-                self.instruction_text = dpg.add_text(self._get_step_instructions(), 
-                                                   wrap=1350)
+            # Create main window - use auto-sizing and proper structure
+            with dpg.window(label="Professional Beatgrid Alignment", 
+                           width=1400, height=900, tag="main_window"):
+                
+                # Step indicator
+                self.step_indicator = dpg.add_text("STEP 1: Adjust Track 1 Beatgrid", 
+                                                 color=(100, 200, 255))
+                
+                # Instructions panel
+                with dpg.collapsing_header(label="📋 Instructions", default_open=True):
+                    self.instruction_text = dpg.add_text(self._get_step_instructions(), 
+                                                       wrap=1350)
+                
+                dpg.add_separator()
+                
+                # Main waveform visualization area
+                self._create_waveform_plots()
+                
+                dpg.add_separator()
+                
+                # Control panel
+                self._create_control_panel()
+                
+                dpg.add_separator()
+                
+                # Status and progress
+                with dpg.group(horizontal=True):
+                    self.status_text = dpg.add_text("Ready - Adjust the beatgrid and click Play to test", 
+                                                   color=(150, 255, 150))
+                    dpg.add_same_line(spacing=50)
+                    self.alignment_quality = dpg.add_text("Alignment: Not measured", 
+                                                         color=(255, 255, 150))
             
-            dpg.add_separator()
+            # Set main window as primary
+            dpg.set_primary_window("main_window", True)
             
-            # Main waveform visualization area
-            self._create_waveform_plots()
+            # Setup viewport
+            dpg.create_viewport(title="🎵 Professional DJ Mix Generator - Beatgrid Alignment", 
+                              width=1450, height=950)
             
-            dpg.add_separator()
+            # Apply theme and setup
+            dpg.bind_theme(self.global_theme)
+            dpg.setup_dearpygui()
             
-            # Control panel
-            self._create_control_panel()
+            return True
             
-            dpg.add_separator()
-            
-            # Status and progress
-            with dpg.group(horizontal=True):
-                self.status_text = dpg.add_text("Ready - Adjust the beatgrid and click Play to test", 
-                                               color=(150, 255, 150))
-                dpg.add_same_line(spacing=50)
-                self.alignment_quality = dpg.add_text("Alignment: Not measured", 
-                                                     color=(255, 255, 150))
-        
-        # Setup viewport
-        dpg.create_viewport(title="🎵 Professional DJ Mix Generator - Beatgrid Alignment", 
-                          width=1450, height=950)
-        
-        # Apply theme and setup
-        dpg.bind_theme(self.global_theme)
-        dpg.setup_dearpygui()
-        
-        return True
+        except Exception as e:
+            print(f"Error creating Dear PyGui interface: {e}")
+            # Clean up context if something went wrong
+            try:
+                dpg.destroy_context()
+            except:
+                pass
+            return False
     
     def _setup_theme(self):
         """Create professional dark theme for audio application"""
@@ -179,114 +192,133 @@ class ProfessionalBeatgridAligner:
     
     def _create_single_track_plot(self):
         """Create single track waveform plot for steps 1 and 2"""
-        track = self.track1 if self.current_step == 1 else self.track2
-        audio_data = self.track1_display if self.current_step == 1 else self.track2_display
-        color = (100, 150, 255) if self.current_step == 1 else (255, 150, 100)
+        try:
+            track = self.track1 if self.current_step == 1 else self.track2
+            audio_data = self.track1_display if self.current_step == 1 else self.track2_display
+            color = (100, 150, 255) if self.current_step == 1 else (255, 150, 100)
+            
+            with dpg.plot(label=f"Track {self.current_step} Waveform Analysis", 
+                         height=350, width=1350, tag="main_plot"):
+                
+                # Configure axes
+                x_axis = dpg.add_plot_axis(dpg.mvXAxis, label="Measures", tag="x_axis")
+                dpg.set_axis_limits("x_axis", 0, self.measures_to_show)
+                
+                y_axis = dpg.add_plot_axis(dpg.mvYAxis, label="Amplitude", tag="y_axis")
+                dpg.set_axis_limits("y_axis", -1.1, 1.1)
+                
+                # Waveform visualization (GPU-accelerated)
+                dpg.add_line_series(self.time_axis.tolist(), audio_data.tolist(), 
+                                   label="Waveform", parent="y_axis", tag="waveform")
+                
+                # Beat lines will be added dynamically
+                self.beat_lines_tag = "beat_lines"
+                self.downbeat_lines_tag = "downbeat_lines"
+                self.playback_line_tag = "playback_line"
         
-        with dpg.plot(label=f"Track {self.current_step} Waveform Analysis", 
-                     height=350, width=1350, tag="main_plot"):
-            
-            # Configure axes
-            x_axis = dpg.add_plot_axis(dpg.mvXAxis, label="Measures", tag="x_axis")
-            dpg.set_axis_limits("x_axis", 0, self.measures_to_show)
-            
-            y_axis = dpg.add_plot_axis(dpg.mvYAxis, label="Amplitude", tag="y_axis")
-            dpg.set_axis_limits("y_axis", -1.1, 1.1)
-            
-            # Waveform visualization (GPU-accelerated)
-            dpg.add_line_series(self.time_axis.tolist(), audio_data.tolist(), 
-                               label="Waveform", parent="y_axis", tag="waveform")
-            
-            # Beat lines will be added dynamically
-            self.beat_lines_tag = "beat_lines"
-            self.downbeat_lines_tag = "downbeat_lines"
-            self.playback_line_tag = "playback_line"
-            
-        # Add drag and drop handler for beatgrid manipulation
-        with dpg.drag_payload(parent="main_plot", drag_data="beatgrid"):
-            dpg.add_text("Adjusting Beatgrid")
+        except Exception as e:
+            print(f"Error creating single track plot: {e}")
+            # Create a simple fallback
+            dpg.add_text(f"Track {self.current_step} visualization (fallback mode)")
+            dpg.add_text("Waveform display error - using simplified interface")
     
     def _create_dual_track_plots(self):
         """Create dual track view for step 3"""
-        # Track 1 plot
-        with dpg.plot(label="Track 1 (Reference)", height=175, width=1350, tag="plot1"):
-            x_axis1 = dpg.add_plot_axis(dpg.mvXAxis, label="", tag="x_axis1")
-            dpg.set_axis_limits("x_axis1", 0, self.measures_to_show)
-            y_axis1 = dpg.add_plot_axis(dpg.mvYAxis, label="", tag="y_axis1")
-            dpg.set_axis_limits("y_axis1", -1.1, 1.1)
+        try:
+            # Track 1 plot
+            with dpg.plot(label="Track 1 (Reference)", height=175, width=1350, tag="plot1"):
+                x_axis1 = dpg.add_plot_axis(dpg.mvXAxis, label="", tag="x_axis1")
+                dpg.set_axis_limits("x_axis1", 0, self.measures_to_show)
+                y_axis1 = dpg.add_plot_axis(dpg.mvYAxis, label="", tag="y_axis1")
+                dpg.set_axis_limits("y_axis1", -1.1, 1.1)
+                
+                dpg.add_line_series(self.time_axis.tolist(), self.track1_display.tolist(),
+                                   label="Track 1", parent="y_axis1", tag="waveform1")
             
-            dpg.add_line_series(self.time_axis.tolist(), self.track1_display.tolist(),
-                               label="Track 1", parent="y_axis1", tag="waveform1")
-        
-        # Track 2 plot
-        with dpg.plot(label="Track 2 (Incoming)", height=175, width=1350, tag="plot2"):
-            x_axis2 = dpg.add_plot_axis(dpg.mvXAxis, label="Measures", tag="x_axis2")
-            dpg.set_axis_limits("x_axis2", 0, self.measures_to_show)
-            y_axis2 = dpg.add_plot_axis(dpg.mvYAxis, label="", tag="y_axis2")
-            dpg.set_axis_limits("y_axis2", -1.1, 1.1)
+            # Track 2 plot
+            with dpg.plot(label="Track 2 (Incoming)", height=175, width=1350, tag="plot2"):
+                x_axis2 = dpg.add_plot_axis(dpg.mvXAxis, label="Measures", tag="x_axis2")
+                dpg.set_axis_limits("x_axis2", 0, self.measures_to_show)
+                y_axis2 = dpg.add_plot_axis(dpg.mvYAxis, label="", tag="y_axis2")
+                dpg.set_axis_limits("y_axis2", -1.1, 1.1)
+                
+                dpg.add_line_series(self.time_axis.tolist(), self.track2_display.tolist(),
+                                   label="Track 2", parent="y_axis2", tag="waveform2")
             
-            dpg.add_line_series(self.time_axis.tolist(), self.track2_display.tolist(),
-                               label="Track 2", parent="y_axis2", tag="waveform2")
-        
-        self.beat_lines_tag = "beat_lines_dual"
-        self.downbeat_lines_tag = "downbeat_lines_dual"
-        self.playback_line_tag = "playback_line_dual"
+            self.beat_lines_tag = "beat_lines_dual"
+            self.downbeat_lines_tag = "downbeat_lines_dual"
+            self.playback_line_tag = "playback_line_dual"
+            
+        except Exception as e:
+            print(f"Error creating dual track plots: {e}")
+            # Create a simple fallback
+            dpg.add_text("Dual track visualization (fallback mode)")
+            dpg.add_text("Using simplified interface due to plot error")
     
     def _create_control_panel(self):
         """Create professional control panel"""
-        with dpg.group(horizontal=True):
-            # Play controls
-            with dpg.child_window(width=300, height=120, border=True):
-                dpg.add_text("🎵 Playback Controls", color=(150, 255, 150))
-                self.play_button = dpg.add_button(label="▶️ Play Section", 
-                                                callback=self._toggle_playback,
-                                                width=120, height=35)
+        try:
+            with dpg.group(horizontal=True):
+                # Play controls
+                with dpg.child_window(width=300, height=120, border=True):
+                    dpg.add_text("🎵 Playback Controls", color=(150, 255, 150))
+                    self.play_button = dpg.add_button(label="▶️ Play Section", 
+                                                    callback=self._toggle_playback,
+                                                    width=120, height=35)
+                    
+                    # Volume control
+                    dpg.add_slider_float(label="Volume", default_value=0.8, 
+                                       min_value=0.0, max_value=1.0,
+                                       callback=self._update_volume,
+                                       width=120)
                 
-                # Volume control
-                dpg.add_slider_float(label="Volume", default_value=0.8, 
-                                   min_value=0.0, max_value=1.0,
-                                   callback=self._update_volume,
-                                   width=120)
-            
-            # BPM and stretch controls  
-            with dpg.child_window(width=350, height=120, border=True):
-                dpg.add_text("🎛️ Tempo Controls", color=(255, 200, 100))
+                # BPM and stretch controls  
+                with dpg.child_window(width=350, height=120, border=True):
+                    dpg.add_text("🎛️ Tempo Controls", color=(255, 200, 100))
+                    
+                    current_bpm = self.track1.bpm if self.current_step == 1 else self.track2.bpm
+                    self.bpm_slider = dpg.add_slider_float(label="BPM", 
+                                                         default_value=current_bpm,
+                                                         min_value=current_bpm * 0.5,
+                                                         max_value=current_bpm * 2.0,
+                                                         callback=self._update_bpm_live,
+                                                         format="%.1f",
+                                                         width=150)
+                    
+                    with dpg.group(horizontal=True):
+                        dpg.add_button(label="🎯 Auto-Align", callback=self._auto_align,
+                                     width=80, height=30)
+                        dpg.add_button(label="↻ Reset", callback=self._reset_alignment, 
+                                     width=60, height=30)
                 
-                current_bpm = self.track1.bpm if self.current_step == 1 else self.track2.bpm
-                self.bpm_slider = dpg.add_slider_float(label="BPM", 
-                                                     default_value=current_bpm,
-                                                     min_value=current_bpm * 0.5,
-                                                     max_value=current_bpm * 2.0,
-                                                     callback=self._update_bpm_live,
-                                                     format="%.1f",
-                                                     width=150)
+                # Step navigation
+                with dpg.child_window(width=250, height=120, border=True):
+                    dpg.add_text("📋 Workflow", color=(255, 150, 255))
+                    
+                    if self.current_step < 3:
+                        dpg.add_button(label="➡️ Next Step", callback=self._next_step,
+                                     width=100, height=40)
+                    else:
+                        dpg.add_button(label="✅ Confirm", callback=self._confirm_alignment,
+                                     width=100, height=40)
+                    
+                    dpg.add_button(label="❌ Cancel", callback=self._cancel_alignment,
+                                 width=100, height=30)
                 
-                with dpg.group(horizontal=True):
-                    dpg.add_button(label="🎯 Auto-Align", callback=self._auto_align,
-                                 width=80, height=30)
-                    dpg.add_button(label="↻ Reset", callback=self._reset_alignment, 
-                                 width=60, height=30)
-            
-            # Step navigation
-            with dpg.child_window(width=250, height=120, border=True):
-                dpg.add_text("📋 Workflow", color=(255, 150, 255))
-                
-                if self.current_step < 3:
-                    dpg.add_button(label="➡️ Next Step", callback=self._next_step,
-                                 width=100, height=40)
-                else:
-                    dpg.add_button(label="✅ Confirm", callback=self._confirm_alignment,
-                                 width=100, height=40)
-                
-                dpg.add_button(label="❌ Cancel", callback=self._cancel_alignment,
-                             width=100, height=30)
-            
-            # Alignment info
-            with dpg.child_window(width=400, height=120, border=True):
-                dpg.add_text("📊 Alignment Status", color=(200, 200, 255))
-                self.offset_display = dpg.add_text("Offset: 0.000s")
-                self.bpm_display = dpg.add_text(f"BPM: {current_bpm:.1f}")
-                self.quality_display = dpg.add_text("Quality: Not measured")
+                # Alignment info
+                with dpg.child_window(width=400, height=120, border=True):
+                    dpg.add_text("📊 Alignment Status", color=(200, 200, 255))
+                    self.offset_display = dpg.add_text("Offset: 0.000s")
+                    self.bpm_display = dpg.add_text(f"BPM: {current_bpm:.1f}")
+                    self.quality_display = dpg.add_text("Quality: Not measured")
+        
+        except Exception as e:
+            print(f"Error creating control panel: {e}")
+            # Create simple fallback controls
+            self.play_button = dpg.add_button(label="▶️ Play Section", 
+                                            callback=self._toggle_playback)
+            dpg.add_button(label="✅ Confirm", callback=self._confirm_alignment)
+            dpg.add_button(label="❌ Cancel", callback=self._cancel_alignment)
     
     def _get_step_instructions(self):
         """Get instructions for current step"""
@@ -538,8 +570,8 @@ class ProfessionalBeatgridAligner:
         # This would recreate the plots for the new step
         # For now, we'll just update the display
         current_bpm = self.track1.bpm if self.current_step == 1 else self.track2.bpm
-        dpg.set_value(self.bmp_slider, current_bpm)
-        dpg.set_value(self.bpm_display, f"BPM: {current_bmp:.1f}")
+        dpg.set_value(self.bpm_slider, current_bpm)
+        dpg.set_value(self.bpm_display, f"BPM: {current_bpm:.1f}")
     
     def _confirm_alignment(self):
         """Confirm final alignment and return result"""
@@ -572,19 +604,36 @@ class ProfessionalBeatgridAligner:
     
     def show(self, callback_func: Optional[Callable] = None) -> Optional[float]:
         """Show the professional beatgrid alignment GUI"""
-        self.callback_func = callback_func
-        
-        if not self.create_gui():
+        try:
+            self.callback_func = callback_func
+            
+            if not self.create_gui():
+                return 0.0
+            
+            dpg.show_viewport()
+            self.gui_running = True
+            
+            # Main GUI loop
+            while dpg.is_dearpygui_running() and self.gui_running:
+                dpg.render_dearpygui_frame()
+            
+            return None
+            
+        except Exception as e:
+            print(f"Error running Dear PyGui interface: {e}")
+            # Clean up
+            try:
+                if self.is_playing:
+                    self._stop_playback()
+            except:
+                pass
+            
+            try:
+                dpg.destroy_context()
+            except:
+                pass
+            
             return 0.0
-        
-        dpg.show_viewport()
-        self.gui_running = True
-        
-        # Main GUI loop
-        while dpg.is_dearpygui_running() and self.gui_running:
-            dpg.render_dearpygui_frame()
-        
-        return None
 
 
 def align_beatgrids_interactive(track1: Track, track2: Track, track1_outro: np.ndarray, track2_intro: np.ndarray,
