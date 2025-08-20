@@ -1359,14 +1359,38 @@ class MixGenerator:
                 
                 crossfaded_overlap = track1_overlap * fade_out + track2_overlap * fade_in
                 
-                # Get the rest of track2 after the overlap
-                track2_remainder = stretched_track.audio[track2_start_sample + min_overlap_length:]
+                # CRITICAL FIX: Get ALL of track2 after the crossfade region
+                # The crossfade uses track2_start_sample as the start point and min_overlap_length as duration
+                # So the remainder starts at track2_start_sample + min_overlap_length
+                crossfade_end_in_track2 = track2_start_sample + min_overlap_length
                 
-                # Build the complete mix: [mix_before_transition] + [crossfaded_overlap] + [track2_remainder]
+                if crossfade_end_in_track2 < len(stretched_track.audio):
+                    track2_remainder = stretched_track.audio[crossfade_end_in_track2:]
+                else:
+                    # CRITICAL BUG: Beat aligner chose a start position too late in the track
+                    print(f"  WARNING: Track {i+1} entirely consumed in crossfade - beat aligner bug!")
+                    print(f"    Track length: {len(stretched_track.audio)} samples ({len(stretched_track.audio)/current_sr:.1f}s)")
+                    print(f"    Crossfade start: {track2_start_sample}, length: {min_overlap_length}")  
+                    print(f"    Crossfade end: {crossfade_end_in_track2}")
+                    print(f"    FIXING: Using simple start position instead of beat aligner")
+                    
+                    # FIX: Use a simple early start position to ensure we get the full track
+                    safe_start_sample = min(transition_samples, len(stretched_track.audio) // 4)  # Start in first quarter
+                    track2_overlap = stretched_track.audio[safe_start_sample:safe_start_sample + min_overlap_length]
+                    if len(track2_overlap) < min_overlap_length:
+                        track2_overlap = np.pad(track2_overlap, (0, min_overlap_length - len(track2_overlap)), 'constant')
+                    
+                    # Redo crossfade with corrected position
+                    crossfaded_overlap = track1_overlap * fade_out + track2_overlap * fade_in
+                    track2_remainder = stretched_track.audio[safe_start_sample + min_overlap_length:]
+                    
+                    print(f"    FIXED: Using start position {safe_start_sample}, remainder: {len(track2_remainder)} samples")
+                
+                # Build the complete mix: [mix_before_transition] + [crossfaded_overlap] + [ALL_remaining_track2]
                 mix_audio = np.concatenate([
-                    mix_before_transition,
-                    crossfaded_overlap, 
-                    track2_remainder
+                    mix_before_transition,    # Mix up to transition point
+                    crossfaded_overlap,       # Crossfaded transition region  
+                    track2_remainder          # ALL remaining audio from track2
                 ])
             
             if min_overlap_length > 0:

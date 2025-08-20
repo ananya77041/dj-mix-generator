@@ -65,11 +65,11 @@ def main():
     test_dir = Path("test_tracks")
     test_dir.mkdir(exist_ok=True)
     
-    # Create 4 test tracks with different characteristics
-    create_test_track(test_dir / "track_1.wav", duration_seconds=45, bpm=120)
-    create_test_track(test_dir / "track_2.wav", duration_seconds=50, bpm=124)  
-    create_test_track(test_dir / "track_3.wav", duration_seconds=40, bpm=128)
-    create_test_track(test_dir / "track_4.wav", duration_seconds=55, bpm=126)
+    # Create 4 test tracks with different characteristics - much longer for valid testing
+    create_test_track(test_dir / "track_1.wav", duration_seconds=120, bpm=120)  # 2 minutes
+    create_test_track(test_dir / "track_2.wav", duration_seconds=150, bpm=124)  # 2.5 minutes  
+    create_test_track(test_dir / "track_3.wav", duration_seconds=180, bpm=128)  # 3 minutes
+    create_test_track(test_dir / "track_4.wav", duration_seconds=135, bpm=126)  # 2.25 minutes
     
     print(f"\nTest tracks created in {test_dir}/")
     print("Run the DJ mix generator with:")
