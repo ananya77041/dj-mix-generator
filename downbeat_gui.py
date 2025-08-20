@@ -221,9 +221,43 @@ def select_first_downbeat(audio: np.ndarray, sr: int, track_name: str, beats: np
         Selected time in seconds, None for auto-detection, or 'cancel' for cancelled
     """
     try:
-        # Check if GUI is available
+        # Check if GUI is available and try different backends
         import matplotlib
-        matplotlib.use('TkAgg')  # Use Tkinter backend for better compatibility
+        
+        # Try different GUI backends in order of preference
+        backends_to_try = ['TkAgg', 'Qt5Agg', 'Qt4Agg', 'GTKAgg']
+        
+        gui_available = False
+        working_backend = None
+        
+        for backend in backends_to_try:
+            try:
+                matplotlib.use(backend, force=True)
+                
+                # Test if the backend actually works
+                import matplotlib.pyplot as plt
+                
+                # Try to create a simple figure to test the backend
+                test_fig = plt.figure()
+                plt.close(test_fig)
+                
+                gui_available = True
+                working_backend = backend
+                print(f"  Using {backend} backend for GUI")
+                break
+                
+            except Exception as backend_error:
+                # This backend doesn't work, try the next one
+                continue
+        
+        if not gui_available:
+            print("  No working GUI backend found. Available backends:")
+            available_backends = matplotlib.rcsetup.interactive_bk
+            print(f"    Matplotlib supports: {', '.join(available_backends)}")
+            print("  Install tkinter: sudo apt-get install python3-tk (Ubuntu/Debian)")
+            print("  Or install PyQt5: pip install PyQt5")
+            print("  Falling back to automatic detection...")
+            return None
         
         selector = DownbeatSelector(audio, sr, track_name, beats)
         
@@ -241,9 +275,22 @@ def select_first_downbeat(audio: np.ndarray, sr: int, track_name: str, beats: np
         
         return result_container['result']
         
+    except ImportError as e:
+        if "tkinter" in str(e).lower() or "_tkinter" in str(e).lower():
+            print("  GUI not available: tkinter is not installed")
+            print("  To install tkinter:")
+            print("    Ubuntu/Debian: sudo apt-get install python3-tk")
+            print("    macOS: tkinter should be included with Python")
+            print("    Windows: tkinter should be included with Python")
+            print("  Alternative: pip install PyQt5")
+        else:
+            print(f"  GUI not available: {e}")
+        print("  Falling back to automatic detection...")
+        return None
+        
     except Exception as e:
-        print(f"Could not open visual selector: {e}")
-        print("Falling back to automatic detection...")
+        print(f"  Could not open visual selector: {e}")
+        print("  Falling back to automatic detection...")
         return None
 
 

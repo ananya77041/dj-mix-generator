@@ -28,6 +28,21 @@ cd /Users/andy.mishra/workspace/dj-mix-generator
 pip install -r requirements.txt
 ```
 
+3. **For visual downbeat selection** (`--manual-downbeats`), you need a GUI backend:
+
+**Option A: tkinter (recommended, usually pre-installed)**
+```bash
+# Ubuntu/Debian
+sudo apt-get install python3-tk
+
+# macOS/Windows: tkinter should already be included
+```
+
+**Option B: PyQt5 (alternative)**
+```bash
+pip install PyQt5
+```
+
 Note: Installing librosa may take a few minutes as it has several dependencies including scipy and scikit-learn.
 
 ## Usage
@@ -266,6 +281,12 @@ The project is organized into modular components:
 - Large audio files take time to analyze
 - Consider using shorter clips for testing
 - BPM detection is the most time-consuming step
+
+**"No working GUI backend found" or "tkinter not installed"**
+- Install tkinter: `sudo apt-get install python3-tk` (Ubuntu/Debian)
+- Alternative: `pip install PyQt5` 
+- Visual downbeat selection requires a GUI backend
+- The tool will automatically fall back to automatic detection
 
 ## Example Test
 
