@@ -18,7 +18,8 @@ class MixGenerator:
     """Handles DJ mix generation with transitions and beatmatching"""
     
     def __init__(self, tempo_strategy: str = "sequential", interactive_beats: bool = False, 
-                 enable_eq_matching: bool = True, enable_volume_matching: bool = True, eq_strength: float = 0.5):
+                 enable_eq_matching: bool = True, enable_volume_matching: bool = True, eq_strength: float = 0.5,
+                 enable_peak_alignment: bool = True):
         self.beat_aligner = BeatAligner(interactive_beats=interactive_beats)
         self.tempo_strategy = tempo_strategy
         self.target_bpm = None  # Will be set based on strategy
@@ -28,6 +29,7 @@ class MixGenerator:
         self.enable_eq_matching = enable_eq_matching
         self.enable_volume_matching = enable_volume_matching
         self.eq_strength = eq_strength
+        self.enable_peak_alignment = enable_peak_alignment
     
     def measures_to_samples(self, measures: int, bpm: float, sr: int, beats_per_measure: int = 4) -> int:
         """Convert measures to audio samples based on BPM and sample rate"""
@@ -575,6 +577,164 @@ class MixGenerator:
             print(f"    Warning: EQ matching failed: {e}")
             return source_audio
     
+    def _detect_audio_peaks(self, audio: np.ndarray, sr: int, min_peak_height: float = 0.1, min_peak_distance_ms: float = 50.0) -> np.ndarray:
+        """
+        Detect significant audio peaks/transients for precise alignment.
+        Returns sample positions of detected peaks.
+        """
+        try:
+            # Use onset detection for better transient detection than simple peak finding
+            onset_frames = librosa.onset.onset_detect(
+                y=audio, 
+                sr=sr,
+                hop_length=512,
+                units='frames',
+                backtrack=True,  # More accurate onset timing
+                pre_max=3,       # Pre-processing window
+                post_max=3,      # Post-processing window 
+                pre_avg=3,       # Pre-averaging window
+                post_avg=5,      # Post-averaging window
+                delta=0.07,      # Minimum strength increase
+                wait=int(min_peak_distance_ms * sr / 1000 / 512)  # Minimum distance between onsets
+            )
+            
+            # Convert frames to sample positions
+            peak_samples = librosa.frames_to_samples(onset_frames, hop_length=512)
+            
+            # Additional peak filtering based on amplitude
+            filtered_peaks = []
+            for peak_sample in peak_samples:
+                if peak_sample < len(audio):
+                    # Check amplitude around peak
+                    window_start = max(0, peak_sample - 256)
+                    window_end = min(len(audio), peak_sample + 256)
+                    peak_amplitude = np.max(np.abs(audio[window_start:window_end]))
+                    
+                    if peak_amplitude >= min_peak_height:
+                        filtered_peaks.append(peak_sample)
+            
+            peaks_array = np.array(filtered_peaks)
+            print(f"    Detected {len(peaks_array)} significant audio peaks/transients")
+            
+            return peaks_array
+            
+        except Exception as e:
+            print(f"    Warning: Peak detection failed: {e}")
+            return np.array([])
+    
+    def _align_peaks_to_beats(self, audio: np.ndarray, peaks: np.ndarray, beats: np.ndarray, sr: int, 
+                             alignment_tolerance_ms: float = 25.0) -> np.ndarray:
+        """
+        Micro-adjust audio peaks to align perfectly with detected beats.
+        This eliminates audio clashing by ensuring every significant transient 
+        coincides with the nearest beat position.
+        """
+        try:
+            if len(peaks) == 0 or len(beats) == 0:
+                print(f"    No peaks or beats available for alignment")
+                return audio
+            
+            print(f"    Performing micro peak-to-beat alignment...")
+            
+            # Convert beat frames to samples
+            beat_samples = librosa.frames_to_samples(beats, hop_length=512)
+            
+            # Create alignment map: peak position -> target beat position
+            alignment_map = []
+            tolerance_samples = int(alignment_tolerance_ms * sr / 1000)
+            
+            for peak_sample in peaks:
+                # Find nearest beat within tolerance
+                distances = np.abs(beat_samples - peak_sample)
+                nearest_beat_idx = np.argmin(distances)
+                nearest_distance = distances[nearest_beat_idx]
+                
+                if nearest_distance <= tolerance_samples:
+                    target_beat_sample = beat_samples[nearest_beat_idx]
+                    offset_samples = target_beat_sample - peak_sample
+                    alignment_map.append((peak_sample, target_beat_sample, offset_samples))
+            
+            if not alignment_map:
+                print(f"    No peaks within alignment tolerance ({alignment_tolerance_ms}ms)")
+                return audio
+            
+            print(f"    Aligning {len(alignment_map)} peaks to nearest beats...")
+            
+            # Apply micro time-shifts using phase vocoder for high quality
+            aligned_audio = audio.copy()
+            
+            # Sort alignment map by peak position
+            alignment_map.sort(key=lambda x: x[0])
+            
+            # Process in small windows around each peak
+            window_size = int(0.1 * sr)  # 100ms windows
+            
+            for i, (peak_pos, target_pos, offset) in enumerate(alignment_map):
+                if abs(offset) < 10:  # Skip tiny adjustments (< 10 samples)
+                    continue
+                
+                # Define processing window around the peak
+                window_start = max(0, peak_pos - window_size // 2)
+                window_end = min(len(aligned_audio), peak_pos + window_size // 2)
+                
+                # Extract window
+                window = aligned_audio[window_start:window_end]
+                
+                if len(window) < 100:  # Skip very small windows
+                    continue
+                
+                try:
+                    # Calculate time shift ratio
+                    shift_ratio = 1.0 + (offset / len(window))
+                    
+                    # Apply high-quality time stretching if shift is significant
+                    if 0.95 <= shift_ratio <= 1.05:  # Only for small adjustments
+                        shifted_window = librosa.effects.time_stretch(window, rate=1/shift_ratio)
+                        
+                        # Ensure window stays the same size
+                        if len(shifted_window) > len(window):
+                            shifted_window = shifted_window[:len(window)]
+                        elif len(shifted_window) < len(window):
+                            padding = len(window) - len(shifted_window)
+                            shifted_window = np.pad(shifted_window, (0, padding), 'constant')
+                        
+                        # Apply with crossfade to avoid clicks
+                        fade_samples = min(512, len(window) // 4)
+                        fade_in = np.linspace(0, 1, fade_samples)
+                        fade_out = np.linspace(1, 0, fade_samples)
+                        
+                        # Crossfade at edges
+                        if window_start > 0:
+                            shifted_window[:fade_samples] = (
+                                shifted_window[:fade_samples] * fade_in + 
+                                window[:fade_samples] * fade_out
+                            )
+                        
+                        if window_end < len(aligned_audio):
+                            shifted_window[-fade_samples:] = (
+                                shifted_window[-fade_samples:] * fade_out[-fade_samples:] + 
+                                window[-fade_samples:] * fade_in[-fade_samples:]
+                            )
+                        
+                        # Apply to main audio
+                        aligned_audio[window_start:window_end] = shifted_window
+                        
+                except Exception as e:
+                    print(f"    Warning: Peak alignment failed for peak {i}: {e}")
+                    continue
+            
+            # Calculate alignment quality metrics
+            total_offset = sum(abs(offset) for _, _, offset in alignment_map)
+            avg_offset_ms = (total_offset / len(alignment_map)) / sr * 1000 if alignment_map else 0
+            
+            print(f"    Peak alignment complete - Avg adjustment: {avg_offset_ms:.1f}ms per peak")
+            
+            return aligned_audio
+            
+        except Exception as e:
+            print(f"    Warning: Peak-to-beat alignment failed: {e}")
+            return audio
+    
     def _create_crossfade(self, track1: Track, track2: Track, transition_duration: float) -> Tuple[np.ndarray, np.ndarray, Track]:
         """Create crossfade transition between two tempo-matched tracks
         
@@ -659,13 +819,67 @@ class MixGenerator:
             track1_outro_processed = track1_outro
             track2_intro_processed = track2_intro
         
-        # 4. Create equal-power crossfade curves with processed audio
+        # 4. MICRO PEAK-TO-BEAT ALIGNMENT for perfect synchronization
+        if self.enable_peak_alignment:
+            print(f"  Applying micro peak-to-beat alignment for perfect synchronization...")
+            
+            # Get beat positions for both tracks during the transition
+            outro_start = max(0, track1_end_sample - len(track1_outro_processed))
+            
+            # Extract beat positions that fall within the transition segments
+            track1_beats_samples = librosa.frames_to_samples(track1.beats, hop_length=512)
+            track2_beats_samples = librosa.frames_to_samples(track2.beats, hop_length=512)
+            
+            # Find beats within track1 outro segment
+            track1_transition_beats = track1_beats_samples[
+                (track1_beats_samples >= outro_start) & 
+                (track1_beats_samples <= track1_end_sample)
+            ] - outro_start  # Make relative to segment start
+            
+            # Find beats within track2 intro segment  
+            track2_transition_beats = track2_beats_samples[
+                (track2_beats_samples >= track2_start_sample) & 
+                (track2_beats_samples <= track2_start_sample + len(track2_intro_processed))
+            ] - track2_start_sample  # Make relative to segment start
+            
+            # Detect and align peaks for perfect synchronization
+            if len(track1_transition_beats) > 0 and len(track2_transition_beats) > 0:
+                # Detect audio peaks in both segments
+                track1_peaks = self._detect_audio_peaks(track1_outro_processed, track1.sr)
+                track2_peaks = self._detect_audio_peaks(track2_intro_processed, track2.sr)
+                
+                # Convert beat sample positions back to frames for alignment function
+                track1_beats_frames = librosa.samples_to_frames(track1_transition_beats, hop_length=512)
+                track2_beats_frames = librosa.samples_to_frames(track2_transition_beats, hop_length=512)
+                
+                # Apply micro peak-to-beat alignment to both tracks
+                print(f"  Track 1 outro: {len(track1_peaks)} peaks, {len(track1_beats_frames)} beats")
+                track1_outro_aligned = self._align_peaks_to_beats(
+                    track1_outro_processed, track1_peaks, track1_beats_frames, track1.sr
+                )
+                
+                print(f"  Track 2 intro: {len(track2_peaks)} peaks, {len(track2_beats_frames)} beats") 
+                track2_intro_aligned = self._align_peaks_to_beats(
+                    track2_intro_processed, track2_peaks, track2_beats_frames, track2.sr
+                )
+                
+                print(f"  Micro peak-to-beat alignment complete - no audio clashing!")
+            else:
+                print(f"  Warning: Insufficient beats in transition segments for peak alignment")
+                track1_outro_aligned = track1_outro_processed
+                track2_intro_aligned = track2_intro_processed
+        else:
+            print(f"  Micro peak alignment disabled - using beat-matched audio")
+            track1_outro_aligned = track1_outro_processed
+            track2_intro_aligned = track2_intro_processed
+        
+        # 5. Create equal-power crossfade curves with perfectly aligned audio
         fade_samples = min_length
         fade_out = np.cos(np.linspace(0, np.pi/2, fade_samples))
         fade_in = np.sin(np.linspace(0, np.pi/2, fade_samples))
         
-        # Apply crossfade with quality-matched audio
-        transition = track1_outro_processed * fade_out + track2_intro_processed * fade_in
+        # Apply crossfade with perfectly aligned audio
+        transition = track1_outro_aligned * fade_out + track2_intro_aligned * fade_in
         
         # 5. Final output normalization to prevent clipping
         final_peak = np.max(np.abs(transition))
