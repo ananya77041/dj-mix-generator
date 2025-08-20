@@ -41,6 +41,21 @@ class KeyMatcher:
             'G minor': {'perfect': ['G minor', 'A# major'], 'compatible': ['D minor', 'C minor', 'F major', 'D# major'], 'semitone': ['G# minor', 'F# minor']},
             'G# minor': {'perfect': ['G# minor', 'B major'], 'compatible': ['D# minor', 'C# minor', 'F# major', 'E major'], 'semitone': ['A minor', 'G minor']},
         }
+        
+        # Circle of Fifths ordering for sorting (C major = 0, G major = 1, etc.)
+        self.key_sort_order = {
+            # Major keys (circle of fifths)
+            'C major': 0, 'G major': 1, 'D major': 2, 'A major': 3, 'E major': 4, 'B major': 5,
+            'F# major': 6, 'C# major': 7, 'G# major': 8, 'D# major': 9, 'A# major': 10, 'F major': 11,
+            
+            # Minor keys (relative minors, offset by 20 to separate from majors)
+            'A minor': 20, 'E minor': 21, 'B minor': 22, 'F# minor': 23, 'C# minor': 24, 'G# minor': 25,
+            'D# minor': 26, 'A# minor': 27, 'F minor': 28, 'C minor': 29, 'G minor': 30, 'D minor': 31,
+        }
+    
+    def _get_key_sort_value(self, key: str) -> int:
+        """Get numeric sort value for key based on circle of fifths"""
+        return self.key_sort_order.get(key, 999)  # Unknown keys sort to end
     
     def get_compatibility_score(self, key1: str, key2: str) -> int:
         """

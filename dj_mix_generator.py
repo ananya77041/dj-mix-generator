@@ -46,6 +46,30 @@ class DJMixGenerator:
             raise ValueError("No valid tracks loaded!")
         
         print(f"Successfully loaded {len(self.tracks)} tracks.\n")
+        
+        # Sort tracks by BPM (ascending), then by key within same BPM
+        self._sort_tracks_by_bpm_and_key()
+    
+    def _sort_tracks_by_bpm_and_key(self):
+        """Sort tracks by BPM (ascending), then by key within same BPM for optimal mixing flow"""
+        if len(self.tracks) <= 1:
+            return
+            
+        print("Sorting tracks by BPM and key...")
+        
+        # Show original order
+        print("Original order:")
+        for i, track in enumerate(self.tracks, 1):
+            print(f"  [{i}] {track.filepath.name}: {track.bpm:.1f} BPM, {track.key}")
+        
+        # Sort by BPM first (ascending), then by key within same BPM
+        # Key sorting uses the key_matcher's circle of fifths ordering
+        self.tracks.sort(key=lambda track: (track.bpm, self.key_matcher._get_key_sort_value(track.key)))
+        
+        print("\nSorted order (by BPM ↑, then by key):")
+        for i, track in enumerate(self.tracks, 1):
+            print(f"  [{i}] {track.filepath.name}: {track.bpm:.1f} BPM, {track.key}")
+        print()
     
     def reorder_by_key(self):
         """Reorder tracks for optimal harmonic mixing"""
