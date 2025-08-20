@@ -62,7 +62,7 @@ class MixGenerator:
             raise ValueError(f"Unknown tempo strategy: {self.tempo_strategy}")
         
     def create_transition(self, track1: Track, track2: Track, transition_duration: float = 30.0, 
-                         stretch_track1: bool = False) -> Tuple[np.ndarray, Track]:
+                         stretch_track1: bool = False) -> Tuple[np.ndarray, np.ndarray, Track]:
         """Create a beat-aligned crossfade transition between two tracks"""
         if self.target_bpm is None:
             raise ValueError("Target BPM not set. Call calculate_target_bpm() first.")
@@ -141,7 +141,7 @@ class MixGenerator:
         else:
             print(f"  ✅ Perfect BPM match for crossfade (difference: {bpm_diff:.6f})")
         
-        return self._create_seamless_transition(track1_for_crossfade, track2_for_crossfade, transition_duration)
+        return self._create_enhanced_crossfade(track1_for_crossfade, track2_for_crossfade, transition_duration)
     
     def _stretch_track_to_bpm(self, track: Track, target_bpm: float) -> Track:
         """Stretch a track to match target BPM with intelligent tempo correction
@@ -989,6 +989,66 @@ class MixGenerator:
         
         return complete_mix, updated_track2
     
+    def _create_enhanced_crossfade(self, track1: Track, track2: Track, transition_duration: float) -> Tuple[np.ndarray, np.ndarray, Track]:
+        """
+        Create enhanced crossfade with quality improvements while maintaining original API.
+        Returns (transition_audio, track2_audio, updated_track2) for proper mix accumulation.
+        """
+        print(f"  Creating enhanced crossfade with professional quality processing...")
+        
+        # Find optimal transition points using downbeat alignment
+        print(f"  Aligning to downbeats...")
+        track1_end_sample, track2_start_sample = self.beat_aligner.find_optimal_transition_points(
+            track1, track2, transition_duration
+        )
+        
+        # Extract beat-aligned audio segments using tempo-matched tracks  
+        track1_outro, track2_intro = self.beat_aligner.align_beats_for_transition(
+            track1, track2, track1_end_sample, track2_start_sample, transition_duration
+        )
+        
+        # Report the alignment
+        track1_end_time = track1_end_sample / track1.sr
+        track2_start_time = track2_start_sample / track2.sr
+        print(f"  Track 1 outro starts at: {track1_end_time - transition_duration:.1f}s, ends at: {track1_end_time:.1f}s")
+        print(f"  Track 2 intro starts at: {track2_start_time:.1f}s")
+        
+        # Create crossfade with beat alignment
+        if len(track1_outro) == 0 or len(track2_intro) == 0:
+            print("  Warning: Empty audio segments, using fallback transition")
+            return self._create_fallback_transition(track1, track2, transition_duration)
+        
+        # Ensure both segments are the same length
+        min_length = min(len(track1_outro), len(track2_intro))
+        track1_outro = track1_outro[:min_length]
+        track2_intro = track2_intro[:min_length]
+        
+        # Apply professional quality improvements to transition segments
+        outro_start = max(0, track1_end_sample - len(track1_outro))
+        intro_start = track2_start_sample
+        
+        track1_outro_enhanced, track2_intro_enhanced = self._apply_transition_quality_processing(
+            track1_outro, track2_intro, track1, track2, outro_start, intro_start
+        )
+        
+        # Create equal-power crossfade curves with enhanced audio
+        fade_samples = min_length
+        fade_out = np.cos(np.linspace(0, np.pi/2, fade_samples))
+        fade_in = np.sin(np.linspace(0, np.pi/2, fade_samples))
+        
+        # Apply crossfade with enhanced audio
+        transition = track1_outro_enhanced * fade_out + track2_intro_enhanced * fade_in
+        
+        # Final output normalization to prevent clipping
+        final_peak = np.max(np.abs(transition))
+        if final_peak > 0.95:
+            transition = transition * (0.95 / final_peak)
+            print(f"  Final transition normalized (peak: {final_peak:.3f} -> 0.95)")
+        
+        print(f"  Enhanced crossfade complete with professional quality processing!")
+        
+        return transition, track2.audio, track2.audio, track2
+    
     def _create_crossfade(self, track1: Track, track2: Track, transition_duration: float) -> Tuple[np.ndarray, np.ndarray, Track]:
         """Create crossfade transition between two tempo-matched tracks
         
@@ -1141,7 +1201,7 @@ class MixGenerator:
             transition = transition * (0.95 / final_peak)
             print(f"  Final transition normalized (peak: {final_peak:.3f} -> 0.95)")
         
-        return transition, track2
+        return transition, track2.audio, track2
     
     def _create_fallback_transition(self, track1: Track, track2: Track, transition_duration: float) -> Tuple[np.ndarray, Track]:
         """
@@ -1168,7 +1228,7 @@ class MixGenerator:
         
         transition = track1_outro * fade_out + track2_intro * fade_in
         
-        return transition, track2
+        return transition, track2.audio, track2
     
     def generate_mix(self, tracks: List[Track], output_path: str, transition_duration: float = None, transition_measures: int = None, transitions_only: bool = False):
         """Generate the complete DJ mix or just the transitions"""
@@ -1246,14 +1306,16 @@ class MixGenerator:
                 duration=len(mix_audio) / current_sr
             )
             
-            # Create seamless transition (maintains full track continuity)
-            complete_transition, updated_track = self.create_transition(prev_track, current_track, transition_duration, stretch_track1=False)
+            # Create enhanced transition with professional quality processing
+            transition, track2_audio, stretched_track = self.create_transition(prev_track, current_track, transition_duration, stretch_track1=False)
             
             # Update current BPM for next iteration
-            current_bpm = updated_track.bpm
+            current_bpm = stretched_track.bpm
             
-            # The complete_transition already includes the seamless blend, so replace the entire mix
-            mix_audio = complete_transition
+            # Properly accumulate the mix: remove the outro segment and add the transition + remaining track
+            transition_samples = len(transition)
+            mix_audio = mix_audio[:-transition_samples]  # Remove outro segment
+            mix_audio = np.concatenate([mix_audio, transition, track2_audio[transition_samples:]])
             
             print(f"  Mix length so far: {len(mix_audio) / current_sr / 60:.1f} minutes\n")
         
@@ -1318,8 +1380,14 @@ class MixGenerator:
                 duration=current_track.duration
             )
             
-            # Generate the seamless transition
-            complete_mix, updated_track = self.create_transition(prev_track, next_track, transition_duration, stretch_track1=False)
+            # Generate the enhanced transition
+            transition_audio, track2_audio, updated_track = self.create_transition(prev_track, next_track, transition_duration, stretch_track1=False)
+            
+            # Create complete mix for extraction purposes
+            transition_samples = len(transition_audio)
+            pre_transition = prev_track.audio[:-transition_samples]
+            post_transition = track2_audio[transition_samples:]
+            complete_mix = np.concatenate([pre_transition, transition_audio, post_transition])
             
             # Find the transition points for extraction
             track1_end_sample, track2_start_sample = self.beat_aligner.find_optimal_transition_points(
