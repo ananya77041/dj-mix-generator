@@ -83,6 +83,8 @@ class BeatgridAligner:
         self.playback_thread = None
         self.playback_audio = None
         self.playback_sr = None
+        self.playback_stream = None  # sounddevice stream object
+        self.stop_playback_flag = False  # Thread-safe stop flag
         
         # Beatgrid stretching state
         self.stretching = False
@@ -766,51 +768,62 @@ class BeatgridAligner:
         print("Both track alignments reset to original positions")
     
     def _play_section(self, event):
-        """Play/pause the audio section currently displayed with live scrolling indicator"""
+        """Play/pause the audio section currently displayed with optimized playback"""
         try:
             import sounddevice as sd
             import time
             import threading
             
             if self.is_playing:
-                # Pause playback
-                sd.stop()
-                self.is_playing = False
-                self.play_btn.label.set_text('Play Section')
-                self.play_btn.color = 'lightgreen'
-                print("Playback paused")
+                # Stop playback
+                self._stop_playback()
                 return
             
-            # Start/resume playback
+            # Prepare audio data
             if self.current_step == 1:
-                self.playback_audio = self.track1_outro_display
+                self.playback_audio = self.track1_outro_display.copy()
                 self.playback_sr = self.track1.sr
                 track_name = "Track 1"
             else:
-                self.playback_audio = self.track2_intro_display  
+                self.playback_audio = self.track2_intro_display.copy()
                 self.playback_sr = self.track2.sr
                 track_name = "Track 2"
             
-            # Start playback from current position
+            # Ensure audio is mono and float32 for optimal performance
+            if len(self.playback_audio.shape) > 1:
+                self.playback_audio = np.mean(self.playback_audio, axis=1)
+            self.playback_audio = self.playback_audio.astype(np.float32)
+            
+            # Normalize audio to prevent clipping/crackling
+            max_val = np.max(np.abs(self.playback_audio))
+            if max_val > 0:
+                self.playback_audio = self.playback_audio * 0.95 / max_val
+            
+            # Calculate start position
             start_sample = int(self.playback_position * self.playback_sr)
-            audio_to_play = self.playback_audio[start_sample:]
-            
-            if len(audio_to_play) == 0:
-                # Reset to beginning if at end
+            if start_sample >= len(self.playback_audio):
                 self.playback_position = 0.0
-                audio_to_play = self.playback_audio
+                start_sample = 0
             
+            # Update UI state
             self.is_playing = True
+            self.stop_playback_flag = False
             self.playback_start_time = time.time()
             self.play_btn.label.set_text('Pause')
             self.play_btn.color = 'yellow'
             
             print(f"Playing {track_name} section from {self.playback_position:.1f}s...")
             
-            # Start audio playback
-            sd.play(audio_to_play, self.playback_sr)
+            # Start non-blocking playback with callback
+            audio_to_play = self.playback_audio[start_sample:]
+            self.playback_stream = sd.play(
+                audio_to_play, 
+                samplerate=self.playback_sr,
+                callback=self._audio_callback,
+                finished_callback=self._playback_finished
+            )
             
-            # Start scrolling indicator thread
+            # Start visual indicator thread with lower frequency updates
             self.playback_thread = threading.Thread(target=self._update_playback_indicator)
             self.playback_thread.daemon = True
             self.playback_thread.start()
@@ -819,10 +832,80 @@ class BeatgridAligner:
             print("Audio playback not available - install sounddevice: pip install sounddevice")
         except Exception as e:
             print(f"Audio playback failed: {e}")
+            self._reset_playback_ui()
+    
+    def _stop_playback(self):
+        """Stop audio playback and clean up"""
+        try:
+            import sounddevice as sd
+            import time
+            
+            # Save current playback position before stopping
+            if self.is_playing and self.playback_start_time:
+                current_time = time.time()
+                elapsed_since_start = current_time - self.playback_start_time
+                start_position_samples = int(self.playback_position * self.playback_sr)
+                current_position_samples = start_position_samples + int(elapsed_since_start * self.playback_sr)
+                self.playback_position = min(
+                    current_position_samples / self.playback_sr,
+                    len(self.playback_audio) / self.playback_sr
+                )
+            
+            self.stop_playback_flag = True
             self.is_playing = False
-            if hasattr(self, 'play_btn'):
+            
+            # Stop audio stream
+            if self.playback_stream is not None:
+                self.playback_stream.stop()
+                self.playback_stream = None
+            else:
+                sd.stop()
+            
+            # Clean up playback line
+            if self.playback_line:
+                try:
+                    self.playback_line.remove()
+                    self.playback_line = None
+                except:
+                    pass
+            
+            # Update UI
+            self._reset_playback_ui()
+            print(f"Playback paused at {self.playback_position:.1f}s")
+            
+        except Exception as e:
+            print(f"Error stopping playback: {e}")
+            self._reset_playback_ui()
+    
+    def _reset_playback_ui(self):
+        """Reset playback UI elements"""
+        try:
+            if hasattr(self, 'play_btn') and self.play_btn is not None:
                 self.play_btn.label.set_text('Play Section')
                 self.play_btn.color = 'lightgreen'
+                self.fig.canvas.draw_idle()
+        except Exception as e:
+            print(f"Error resetting UI: {e}")
+    
+    def _audio_callback(self, outdata, frames, time, status):
+        """Audio stream callback - handles any audio stream issues"""
+        if status:
+            print(f"Audio callback status: {status}")
+    
+    def _playback_finished(self):
+        """Called when playback finishes naturally"""
+        self.is_playing = False
+        self.playback_position = 0.0
+        self._reset_playback_ui()
+        
+        # Clean up playback line
+        if self.playback_line:
+            try:
+                self.playback_line.remove()
+                self.playback_line = None
+                self.fig.canvas.draw_idle()
+            except:
+                pass
     
     def _next_step(self, event):
         """Advance to the next step in the workflow"""
@@ -886,13 +969,13 @@ class BeatgridAligner:
     
     def _close_with_result(self, offset: float):
         """Close the GUI and return result via callback"""
-        # Stop any ongoing playback
+        # Stop any ongoing playback properly
         if self.is_playing:
-            try:
-                import sounddevice as sd
-                sd.stop()
-            except:
-                pass
+            self._stop_playback()
+        
+        # Wait a moment for cleanup
+        import time
+        time.sleep(0.1)
         
         if self.callback_func:
             self.callback_func(offset)
@@ -1001,28 +1084,26 @@ class BeatgridAligner:
         self.fig.canvas.draw_idle()
     
     def _update_playback_indicator(self):
-        """Update the live playback position indicator"""
+        """Update the live playback position indicator with optimized performance"""
         import time
         
-        while self.is_playing:
+        last_measure = -1  # Track last drawn measure to avoid unnecessary redraws
+        update_count = 0
+        
+        while self.is_playing and not self.stop_playback_flag:
             try:
                 # Calculate current playback position
                 current_time = time.time()
-                elapsed_time = current_time - self.playback_start_time
-                self.playback_position += elapsed_time / 10  # Update 10x per second
-                self.playback_start_time = current_time
+                elapsed_since_start = current_time - self.playback_start_time
+                
+                # Update position based on actual elapsed time
+                start_position_samples = int(self.playback_position * self.playback_sr)
+                current_position_samples = start_position_samples + int(elapsed_since_start * self.playback_sr)
+                self.playback_position = current_position_samples / self.playback_sr
                 
                 # Check if playback finished
                 max_duration = len(self.playback_audio) / self.playback_sr
-                if self.playback_position >= max_duration:
-                    self.is_playing = False
-                    self.playback_position = 0.0
-                    self.play_btn.label.set_text('Play Section')
-                    self.play_btn.color = 'lightgreen'
-                    if self.playback_line:
-                        self.playback_line.remove()
-                        self.playback_line = None
-                    self.fig.canvas.draw_idle()
+                if self.playback_position >= max_duration or self.stop_playback_flag:
                     break
                 
                 # Convert playback position to measures
@@ -1033,31 +1114,59 @@ class BeatgridAligner:
                 measures_per_second = beats_per_second / self.beats_per_measure
                 playback_measure = self.playback_position * measures_per_second
                 
-                # Update playback indicator line
-                if 0 <= playback_measure <= self.measures_to_show:
-                    # Remove old line
-                    if self.playback_line:
-                        self.playback_line.remove()
-                    
-                    # Add new line
-                    axes_to_draw = [self.ax_main] if self.current_step in [1, 2] else [self.ax_track1, self.ax_track2]
-                    for ax in axes_to_draw:
-                        if ax is not None:
-                            self.playback_line = ax.axvline(x=playback_measure, color='red', alpha=0.8, 
-                                                          linestyle='-', linewidth=2.0, zorder=100)
-                    
-                    self.fig.canvas.draw_idle()
+                # Only update if position changed significantly (reduces UI blocking)
+                measure_rounded = round(playback_measure, 2)  # Round to avoid micro-updates
                 
-                time.sleep(0.1)  # 10 FPS update rate
+                if (0 <= playback_measure <= self.measures_to_show and 
+                    abs(measure_rounded - last_measure) > 0.01):  # Only update if moved > 0.01 measures
+                    
+                    last_measure = measure_rounded
+                    
+                    # Use matplotlib's more efficient blitting if available
+                    try:
+                        # Remove old line efficiently
+                        if self.playback_line:
+                            self.playback_line.remove()
+                            self.playback_line = None
+                        
+                        # Add new line to appropriate axes
+                        axes_to_draw = [self.ax_main] if self.current_step in [1, 2] else [self.ax_track1, self.ax_track2]
+                        
+                        # Draw on first axis only to reduce load
+                        primary_ax = axes_to_draw[0] if axes_to_draw and axes_to_draw[0] is not None else None
+                        if primary_ax:
+                            self.playback_line = primary_ax.axvline(
+                                x=playback_measure, 
+                                color='red', 
+                                alpha=0.7,  # Slightly more transparent
+                                linestyle='-', 
+                                linewidth=1.5,  # Slightly thinner
+                                zorder=50  # Lower zorder
+                            )
+                        
+                        # Update UI efficiently - only every 3rd frame to reduce load
+                        update_count += 1
+                        if update_count % 3 == 0:  # Update every 3rd frame (≈3 FPS visual updates)
+                            self.fig.canvas.draw_idle()
+                    
+                    except Exception as e:
+                        print(f"Line drawing error: {e}")
+                
+                # Longer sleep for better performance (5 FPS instead of 10 FPS)
+                time.sleep(0.2)
                 
             except Exception as e:
                 print(f"Playback indicator update failed: {e}")
                 break
         
         # Clean up when playback stops
-        if self.playback_line:
-            self.playback_line.remove()
-            self.playback_line = None
+        try:
+            if self.playback_line:
+                self.playback_line.remove()
+                self.playback_line = None
+                self.fig.canvas.draw_idle()
+        except:
+            pass
     
     def show(self, callback_func: Optional[Callable] = None) -> Optional[float]:
         """
