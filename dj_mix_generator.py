@@ -16,10 +16,10 @@ from models import Track
 class DJMixGenerator:
     """Main DJ Mix Generator class that coordinates audio analysis and mix generation"""
     
-    def __init__(self, use_cache: bool = True, manual_downbeats: bool = False, allow_irregular_tempo: bool = False, tempo_strategy: str = "sequential", interactive_beats: bool = False, enable_eq_matching: bool = True, enable_volume_matching: bool = True, enable_peak_alignment: bool = True, eq_strength: float = 0.5):
+    def __init__(self, use_cache: bool = True, manual_downbeats: bool = False, allow_irregular_tempo: bool = False, tempo_strategy: str = "sequential", interactive_beats: bool = False, enable_eq_matching: bool = True, enable_volume_matching: bool = True, enable_peak_alignment: bool = True, eq_strength: float = 0.5, enable_tempo_correction: bool = True):
         self.tracks: List[Track] = []
         self.analyzer = AudioAnalyzer(use_cache=use_cache, manual_downbeats=manual_downbeats, allow_irregular_tempo=allow_irregular_tempo)
-        self.mixer = MixGenerator(tempo_strategy=tempo_strategy, interactive_beats=interactive_beats, enable_eq_matching=enable_eq_matching, enable_volume_matching=enable_volume_matching, enable_peak_alignment=enable_peak_alignment, eq_strength=eq_strength)
+        self.mixer = MixGenerator(tempo_strategy=tempo_strategy, interactive_beats=interactive_beats, enable_eq_matching=enable_eq_matching, enable_volume_matching=enable_volume_matching, enable_peak_alignment=enable_peak_alignment, eq_strength=eq_strength, enable_tempo_correction=enable_tempo_correction)
         self.key_matcher = KeyMatcher()
         self.tempo_strategy = tempo_strategy
         self.interactive_beats = interactive_beats
@@ -121,6 +121,7 @@ def main():
         print("  --no-eq-matching       Disable EQ matching during transitions (faster processing)")
         print("  --no-volume-matching   Disable volume normalization during transitions")
         print("  --no-peak-alignment    Disable micro peak-to-beat alignment (faster processing)")
+        print("  --no-tempo-correction  Disable piecewise tempo correction for drift elimination")
         print("  --eq-strength=N        EQ matching strength: 0.0-1.0 (default: 0.5, 0=off)")
         print("  --no-cache             Disable track analysis caching")
         print("  --cache-info           Show cache information and exit")
@@ -141,6 +142,7 @@ def main():
     enable_eq_matching = True
     enable_volume_matching = True
     enable_peak_alignment = True
+    enable_tempo_correction = True
     eq_strength = 0.5
     playlist = []
     output_path = "dj_mix.wav"
@@ -212,6 +214,10 @@ def main():
             enable_peak_alignment = False
             args.remove("--no-peak-alignment")
         
+        if "--no-tempo-correction" in args:
+            enable_tempo_correction = False
+            args.remove("--no-tempo-correction")
+        
         # Check for EQ strength setting
         eq_strength_args = [arg for arg in args if arg.startswith("--eq-strength=")]
         if eq_strength_args:
@@ -270,7 +276,7 @@ def main():
             return 1
     
     try:
-        dj = DJMixGenerator(use_cache=use_cache, manual_downbeats=manual_downbeats, allow_irregular_tempo=allow_irregular_tempo, tempo_strategy=tempo_strategy, interactive_beats=interactive_beats, enable_eq_matching=enable_eq_matching, enable_volume_matching=enable_volume_matching, enable_peak_alignment=enable_peak_alignment, eq_strength=eq_strength)
+        dj = DJMixGenerator(use_cache=use_cache, manual_downbeats=manual_downbeats, allow_irregular_tempo=allow_irregular_tempo, tempo_strategy=tempo_strategy, interactive_beats=interactive_beats, enable_eq_matching=enable_eq_matching, enable_volume_matching=enable_volume_matching, enable_peak_alignment=enable_peak_alignment, eq_strength=eq_strength, enable_tempo_correction=enable_tempo_correction)
         dj.load_playlist(playlist)
         
         # Optionally reorder by key

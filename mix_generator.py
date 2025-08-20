@@ -19,7 +19,7 @@ class MixGenerator:
     
     def __init__(self, tempo_strategy: str = "sequential", interactive_beats: bool = False, 
                  enable_eq_matching: bool = True, enable_volume_matching: bool = True, eq_strength: float = 0.5,
-                 enable_peak_alignment: bool = True):
+                 enable_peak_alignment: bool = True, enable_tempo_correction: bool = True):
         self.beat_aligner = BeatAligner(interactive_beats=interactive_beats)
         self.tempo_strategy = tempo_strategy
         self.target_bpm = None  # Will be set based on strategy
@@ -30,6 +30,7 @@ class MixGenerator:
         self.enable_volume_matching = enable_volume_matching
         self.eq_strength = eq_strength
         self.enable_peak_alignment = enable_peak_alignment
+        self.enable_tempo_correction = enable_tempo_correction
     
     def measures_to_samples(self, measures: int, bpm: float, sr: int, beats_per_measure: int = 4) -> int:
         """Convert measures to audio samples based on BPM and sample rate"""
@@ -153,16 +154,24 @@ class MixGenerator:
         
         if abs(bpm_ratio - 1.0) > 0.001:  # Professional precision: stretch for any meaningful BPM difference
             print(f"    Time-stretching {track.filepath.name}: {track.bpm:.1f} -> {target_bpm:.1f} (ratio: {bpm_ratio:.3f})")
-            print(f"    Applying intelligent tempo correction to eliminate drift...")
             
-            # Apply intelligent tempo correction to maintain consistent timing
-            stretched_audio, corrected_beats, corrected_downbeats = self._apply_intelligent_tempo_correction(
-                track, target_bpm
-            )
-            
-            # Calculate actual BPM from corrected beats for perfect accuracy
-            actual_bpm = self._calculate_actual_bpm_from_beats(corrected_beats, track.sr)
-            print(f"    Final BPM after correction: {actual_bpm:.3f} (target: {target_bpm:.3f})")
+            if self.enable_tempo_correction:
+                print(f"    Applying intelligent tempo correction to eliminate drift...")
+                # Apply intelligent tempo correction to maintain consistent timing
+                stretched_audio, corrected_beats, corrected_downbeats = self._apply_intelligent_tempo_correction(
+                    track, target_bpm
+                )
+                # Calculate actual BPM from corrected beats for perfect accuracy
+                actual_bpm = self._calculate_actual_bpm_from_beats(corrected_beats, track.sr)
+                print(f"    Final BPM after correction: {actual_bpm:.3f} (target: {target_bpm:.3f})")
+            else:
+                print(f"    Using simple time-stretching (tempo correction disabled)")
+                # Simple time-stretching without piecewise correction
+                stretched_audio = librosa.effects.time_stretch(track.audio, rate=bpm_ratio)
+                # Scale beats and downbeats proportionally
+                corrected_beats = track.beats / bpm_ratio
+                corrected_downbeats = track.downbeats / bpm_ratio
+                actual_bpm = target_bpm
             
             return Track(
                 filepath=track.filepath,
