@@ -81,16 +81,20 @@ class MixGenerator:
         # Debug: verify BPMs match before passing to crossfade
         print(f"  Final BPMs before crossfade: Track1={track1_stretched.bpm:.1f}, Track2={track2_stretched.bpm:.1f}")
         bpm_diff = abs(track1_stretched.bpm - track2_stretched.bpm)
-        if bpm_diff > 0.1:
-            print(f"  ⚠ Warning: Tempo mismatch detected ({bpm_diff:.1f} BPM difference)")
+        if bpm_diff > 0.01:  # Very strict: even 0.01 BPM difference should be flagged  
+            print(f"  ⚠ Warning: Tempo mismatch detected ({bpm_diff:.3f} BPM difference - should be < 0.01)")
         
         return self._create_crossfade(track1_stretched, track2_stretched, transition_duration)
     
     def _stretch_track_to_bpm(self, track: Track, target_bpm: float) -> Track:
-        """Stretch a track to match target BPM with intelligent tempo correction"""
+        """Stretch a track to match target BPM with intelligent tempo correction
+        
+        Professional DJ precision: Any BPM difference > 0.1% requires correction.
+        Even minimal differences (e.g. 128.0 vs 127.7) cause audible drift over time.
+        """
         bpm_ratio = track.bpm / target_bpm  # Ratio to stretch to target tempo
         
-        if abs(bpm_ratio - 1.0) > 0.05:  # Only stretch if BPMs differ significantly
+        if abs(bpm_ratio - 1.0) > 0.001:  # Professional precision: stretch for any meaningful BPM difference
             print(f"    Time-stretching {track.filepath.name}: {track.bpm:.1f} -> {target_bpm:.1f} (ratio: {bpm_ratio:.3f})")
             print(f"    Applying intelligent tempo correction to eliminate drift...")
             
@@ -110,24 +114,28 @@ class MixGenerator:
                 duration=len(stretched_audio) / track.sr
             )
         else:
-            print(f"    {track.filepath.name}: No stretching needed ({track.bpm:.1f} ≈ {target_bpm:.1f})")
-            # Even if no major stretching needed, apply tempo correction to eliminate drift
+            # BPMs are extremely close (< 0.1% difference), but still apply professional drift correction
+            bpm_diff = abs(track.bpm - target_bpm)
+            print(f"    {track.filepath.name}: Minimal difference ({track.bpm:.1f} vs {target_bpm:.1f}, diff: {bpm_diff:.3f} BPM)")
+            
             if len(track.beats) > 4:  # Only if we have enough beats
-                print(f"    Applying drift correction at current tempo...")
+                print(f"    Applying professional drift correction to target BPM {target_bpm:.1f}...")
                 stretched_audio, corrected_beats, corrected_downbeats = self._apply_intelligent_tempo_correction(
-                    track, track.bpm
+                    track, target_bpm  # Use target BPM, not original BPM for true precision
                 )
                 return Track(
                     filepath=track.filepath,
                     audio=stretched_audio,
                     sr=track.sr,
-                    bpm=track.bpm,
+                    bpm=target_bpm,  # Use target BPM for perfect matching
                     key=track.key,
                     beats=corrected_beats,
                     downbeats=corrected_downbeats,
                     duration=len(stretched_audio) / track.sr
                 )
-            return track
+            else:
+                print(f"    Warning: Not enough beats detected for drift correction")
+                return track
     
     def _apply_intelligent_tempo_correction(self, track: Track, target_bpm: float) -> Tuple[np.ndarray, np.ndarray, np.ndarray]:
         """
