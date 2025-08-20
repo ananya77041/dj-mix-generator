@@ -15,10 +15,11 @@ from track_cache import TrackCache
 class AudioAnalyzer:
     """Handles audio analysis for BPM, key detection, and beat tracking"""
     
-    def __init__(self, use_cache: bool = True, manual_downbeats: bool = False):
+    def __init__(self, use_cache: bool = True, manual_downbeats: bool = False, allow_irregular_tempo: bool = False):
         self.key_names = ['C', 'C#', 'D', 'D#', 'E', 'F', 'F#', 'G', 'G#', 'A', 'A#', 'B']
         self.use_cache = use_cache
         self.manual_downbeats = manual_downbeats
+        self.allow_irregular_tempo = allow_irregular_tempo
         self.cache = TrackCache() if use_cache else None
         
     def analyze_track(self, filepath: str) -> Track:
@@ -44,9 +45,12 @@ class AudioAnalyzer:
             tempo, beats = librosa.beat.beat_track(y=audio, sr=sr)
             bpm = float(tempo)
             
-            # Downbeat detection (stronger beats that mark musical measures)
+            # Downbeat detection and potential BPM adjustment
             if self.manual_downbeats:
-                downbeats, was_manual = self._get_manual_downbeats(audio, sr, beats, os.path.basename(filepath))
+                downbeats, was_manual, final_bpm = self._get_manual_downbeats(audio, sr, beats, os.path.basename(filepath), bpm)
+                if final_bpm != bpm:
+                    print(f"  BPM adjusted: {bpm:.1f} → {final_bpm:.1f}")
+                    bpm = final_bpm
             else:
                 downbeats = self._detect_downbeats(audio, sr, beats, bpm)
                 was_manual = False
@@ -280,28 +284,30 @@ class AudioAnalyzer:
             else:
                 return np.array([beats[0]]) if len(beats) > 0 else np.array([])
     
-    def _get_manual_downbeats(self, audio: np.ndarray, sr: int, beats: np.ndarray, track_name: str) -> tuple[np.ndarray, bool]:
+    def _get_manual_downbeats(self, audio: np.ndarray, sr: int, beats: np.ndarray, track_name: str, detected_bpm: float) -> tuple[np.ndarray, bool, float]:
         """
         Get downbeats through manual selection via GUI
-        Returns (downbeats, was_manually_selected)
+        Returns (downbeats, was_manually_selected, final_bpm)
         """
         try:
             from downbeat_gui import select_first_downbeat
             
             # Show GUI for manual selection
-            result = select_first_downbeat(audio, sr, track_name, beats)
+            result = select_first_downbeat(audio, sr, track_name, beats, detected_bpm, self.allow_irregular_tempo)
             
             if result == 'cancel':
                 print("  Manual selection cancelled, using automatic detection")
-                return self._detect_downbeats(audio, sr, beats, 0), False  # Not manual
+                return self._detect_downbeats(audio, sr, beats, detected_bpm), False, detected_bpm
             elif result is None:
                 print("  Using automatic detection as requested")
-                return self._detect_downbeats(audio, sr, beats, 0), False  # Not manual
-            else:
-                print(f"  Manual downbeat selected at: {result:.3f}s")
+                return self._detect_downbeats(audio, sr, beats, detected_bpm), False, detected_bpm
+            elif isinstance(result, dict):
+                first_downbeat = result['first_downbeat']
+                final_bpm = result['bpm']
+                print(f"  Manual downbeat selected at: {first_downbeat:.3f}s, BPM: {final_bpm:.1f}")
                 
                 # Convert the selected time to downbeat pattern
-                first_downbeat_frame = librosa.time_to_frames(result, sr=sr, hop_length=512)
+                first_downbeat_frame = librosa.time_to_frames(first_downbeat, sr=sr, hop_length=512)
                 
                 # Generate regular downbeats from this starting point
                 beats_per_measure = 4
@@ -324,14 +330,17 @@ class AudioAnalyzer:
                 if downbeat_indices:
                     downbeats = beats[downbeat_indices]
                     print(f"  Generated {len(downbeats)} downbeats from manual selection")
-                    return downbeats, True  # Was manually selected
+                    return downbeats, True, final_bpm
                 else:
                     print("  Could not generate downbeats from selection, using automatic detection")
-                    return self._detect_downbeats(audio, sr, beats, 0), False  # Fallback to auto
+                    return self._detect_downbeats(audio, sr, beats, detected_bpm), False, detected_bpm
+            else:
+                print("  Unexpected result from GUI, using automatic detection")
+                return self._detect_downbeats(audio, sr, beats, detected_bpm), False, detected_bpm
             
         except ImportError:
             print("  Warning: GUI not available, falling back to automatic detection")
-            return self._detect_downbeats(audio, sr, beats, 0), False  # Not manual
+            return self._detect_downbeats(audio, sr, beats, detected_bpm), False, detected_bpm
         except Exception as e:
             print(f"  Warning: Manual selection failed ({e}), using automatic detection")
-            return self._detect_downbeats(audio, sr, beats, 0), False  # Not manual
+            return self._detect_downbeats(audio, sr, beats, detected_bpm), False, detected_bpm

@@ -16,9 +16,9 @@ from models import Track
 class DJMixGenerator:
     """Main DJ Mix Generator class that coordinates audio analysis and mix generation"""
     
-    def __init__(self, use_cache: bool = True, manual_downbeats: bool = False):
+    def __init__(self, use_cache: bool = True, manual_downbeats: bool = False, allow_irregular_tempo: bool = False):
         self.tracks: List[Track] = []
-        self.analyzer = AudioAnalyzer(use_cache=use_cache, manual_downbeats=manual_downbeats)
+        self.analyzer = AudioAnalyzer(use_cache=use_cache, manual_downbeats=manual_downbeats, allow_irregular_tempo=allow_irregular_tempo)
         self.mixer = MixGenerator()
         self.key_matcher = KeyMatcher()
     
@@ -105,7 +105,8 @@ def main():
         print("\nOptions:")
         print("  --reorder-by-key       Reorder tracks for optimal harmonic mixing")
         print("  --transitions-only     Generate only transition sections for testing (with 5s buffers)")
-        print("  --manual-downbeats     Use visual interface to manually select first downbeat")
+        print("  --manual-downbeats     Use visual interface to manually select downbeats and BPM")
+        print("  --irregular-tempo      Allow non-integer BPM values (use with --manual-downbeats)")
         print("  --no-cache             Disable track analysis caching")
         print("  --cache-info           Show cache information and exit")
         print("  --clear-cache          Clear track analysis cache and exit")
@@ -116,6 +117,7 @@ def main():
     reorder_by_key = False
     transitions_only = False
     manual_downbeats = False
+    allow_irregular_tempo = False
     use_cache = True
     playlist = []
     output_path = "dj_mix.wav"
@@ -162,6 +164,10 @@ def main():
             manual_downbeats = True
             args.remove("--manual-downbeats")
         
+        if "--irregular-tempo" in args:
+            allow_irregular_tempo = True
+            args.remove("--irregular-tempo")
+        
         if "--no-cache" in args:
             use_cache = False
             args.remove("--no-cache")
@@ -174,7 +180,7 @@ def main():
             return 1
     
     try:
-        dj = DJMixGenerator(use_cache=use_cache, manual_downbeats=manual_downbeats)
+        dj = DJMixGenerator(use_cache=use_cache, manual_downbeats=manual_downbeats, allow_irregular_tempo=allow_irregular_tempo)
         dj.load_playlist(playlist)
         
         # Optionally reorder by key

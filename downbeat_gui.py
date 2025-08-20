@@ -13,14 +13,22 @@ from typing import Optional, Callable
 
 
 class DownbeatSelector:
-    """Interactive GUI for selecting the first downbeat in a track"""
+    """Interactive GUI for selecting downbeats and BPM in a track"""
     
-    def __init__(self, audio: np.ndarray, sr: int, track_name: str, beats: np.ndarray):
+    def __init__(self, audio: np.ndarray, sr: int, track_name: str, beats: np.ndarray, 
+                 detected_bpm: float, allow_irregular_tempo: bool = False):
         self.audio = audio
         self.sr = sr
         self.track_name = track_name
         self.beats = beats
-        self.selected_downbeat = None
+        self.detected_bpm = detected_bpm
+        self.allow_irregular_tempo = allow_irregular_tempo
+        
+        # Selection state
+        self.first_downbeat = None
+        self.second_downbeat = None
+        self.selection_mode = 'first'  # 'first' or 'second'
+        self.calculated_bpm = detected_bpm
         self.callback_func = None
         
         # Only show first 10 seconds
@@ -48,7 +56,7 @@ class DownbeatSelector:
         
         # Plot waveform
         self.ax_wave.plot(self.time_axis, self.audio_segment, color='steelblue', alpha=0.8, linewidth=0.5)
-        self.ax_wave.set_title(f'Select First Downbeat - {self.track_name}', fontsize=14, fontweight='bold')
+        self.ax_wave.set_title(f'Select Downbeats & BPM - {self.track_name}', fontsize=14, fontweight='bold')
         self.ax_wave.set_xlabel('Time (seconds)', fontsize=12)
         self.ax_wave.set_ylabel('Amplitude', fontsize=12)
         self.ax_wave.grid(True, alpha=0.3)
@@ -63,12 +71,14 @@ class DownbeatSelector:
             self.ax_wave.legend(loc='upper right')
         
         # Instructions text
+        tempo_mode = "irregular" if self.allow_irregular_tempo else "whole numbers"
         instruction_text = (
-            "Instructions:\n"
+            f"Instructions (BPM will be quantized to {tempo_mode}):\n"
+            f"• Detected BPM: {self.detected_bpm:.1f}\n"
             "• Orange dashed lines show detected beats\n"
-            "• Click on the waveform where the first downbeat should be\n"
-            "• Red line will show your selection\n"
-            "• Click 'Confirm' to accept or 'Auto-Detect' to use automatic detection"
+            "• Step 1: Click on the first downbeat (red line)\n"
+            "• Step 2: Click on a later downbeat to set BPM (green line)\n"
+            "• BPM will be calculated and displayed above"
         )
         
         self.ax_controls.text(0.02, 0.95, instruction_text, 
@@ -84,8 +94,10 @@ class DownbeatSelector:
         # Connect click event
         self.fig.canvas.mpl_connect('button_press_event', self._on_click)
         
-        # Track selection line
-        self.selection_line = None
+        # Track selection lines
+        self.first_downbeat_line = None
+        self.second_downbeat_line = None
+        self.bpm_text = None
         
         # Set window title
         self.fig.canvas.manager.set_window_title(f'Downbeat Selection - {self.track_name}')
@@ -130,47 +142,127 @@ class DownbeatSelector:
             
             # If click is reasonably close to a beat (within 0.2 seconds), snap to it
             if beat_distances[closest_beat_idx] < 0.2:
-                self.selected_downbeat = closest_beat_time
+                selected_time = closest_beat_time
             else:
-                self.selected_downbeat = click_time
+                selected_time = click_time
         else:
-            self.selected_downbeat = click_time
+            selected_time = click_time
+        
+        # Handle selection based on current mode
+        if self.selection_mode == 'first':
+            self.first_downbeat = selected_time
+            self.selection_mode = 'second'
+            print(f"First downbeat selected at: {self.first_downbeat:.3f}s")
+            print("Now click on a later downbeat to set BPM...")
+        else:  # selection_mode == 'second'
+            if selected_time <= self.first_downbeat:
+                print(f"Second downbeat must be after first downbeat ({self.first_downbeat:.3f}s)")
+                return
+            
+            self.second_downbeat = selected_time
+            print(f"Second downbeat selected at: {self.second_downbeat:.3f}s")
+            
+            # Calculate BPM from the two selections
+            self._calculate_bpm()
         
         # Update visual selection
         self._update_selection_visual()
+    
+    def _calculate_bpm(self):
+        """Calculate BPM from two downbeat selections and quantize"""
+        if self.first_downbeat is None or self.second_downbeat is None:
+            return
         
-        print(f"Selected downbeat at: {self.selected_downbeat:.3f}s")
+        # Calculate time difference
+        time_diff = self.second_downbeat - self.first_downbeat
+        
+        # Assume the selections are one measure apart (4 beats)
+        # User could select 1 measure, 2 measures, etc. apart
+        # We'll calculate for 1 measure and let user adjust if needed
+        beats_per_measure = 4
+        raw_bpm = (beats_per_measure * 60.0) / time_diff
+        
+        # Quantize BPM
+        if self.allow_irregular_tempo:
+            self.calculated_bpm = round(raw_bpm, 1)  # Round to 1 decimal
+        else:
+            self.calculated_bpm = round(raw_bpm)  # Round to nearest whole number
+        
+        print(f"Calculated BPM: {raw_bpm:.2f} → Quantized: {self.calculated_bpm:.1f}")
     
     def _update_selection_visual(self):
-        """Update the visual indicator for selected downbeat"""
-        # Remove previous selection line
-        if self.selection_line:
-            self.selection_line.remove()
+        """Update the visual indicators for selected downbeats and BPM"""
+        # Remove previous selection lines
+        if self.first_downbeat_line:
+            self.first_downbeat_line.remove()
+        if self.second_downbeat_line:
+            self.second_downbeat_line.remove()
+        if self.bpm_text:
+            self.bpm_text.remove()
         
-        # Add new selection line
-        if self.selected_downbeat is not None:
-            self.selection_line = self.ax_wave.axvline(
-                x=self.selected_downbeat, 
+        # Add first downbeat line
+        if self.first_downbeat is not None:
+            self.first_downbeat_line = self.ax_wave.axvline(
+                x=self.first_downbeat, 
                 color='red', 
                 linewidth=3, 
                 alpha=0.8,
-                label='Selected downbeat'
+                label='First downbeat'
             )
+        
+        # Add second downbeat line
+        if self.second_downbeat is not None:
+            self.second_downbeat_line = self.ax_wave.axvline(
+                x=self.second_downbeat, 
+                color='green', 
+                linewidth=3, 
+                alpha=0.8,
+                label='Second downbeat'
+            )
+        
+        # Add BPM text display
+        if self.first_downbeat is not None and self.second_downbeat is not None:
+            # Position BPM text between the two selections
+            text_x = (self.first_downbeat + self.second_downbeat) / 2
+            text_y = max(self.audio_segment) * 0.8  # 80% up from bottom
             
-            # Update legend
+            tempo_type = "irregular" if self.allow_irregular_tempo else "quantized"
+            self.bpm_text = self.ax_wave.text(
+                text_x, text_y,
+                f'BPM: {self.calculated_bpm:.1f}\n({tempo_type})',
+                ha='center', va='center',
+                bbox=dict(boxstyle='round,pad=0.3', facecolor='yellow', alpha=0.8),
+                fontsize=12, fontweight='bold'
+            )
+        
+        # Update legend
+        if self.first_downbeat is not None or self.second_downbeat is not None:
             self.ax_wave.legend(loc='upper right')
         
         # Refresh the plot
         self.fig.canvas.draw()
     
     def _confirm_selection(self, event):
-        """Confirm the selected downbeat"""
-        if self.selected_downbeat is None:
-            print("No downbeat selected. Please click on the waveform first.")
+        """Confirm the selected downbeats and BPM"""
+        if self.first_downbeat is None:
+            print("No first downbeat selected. Please click on the waveform first.")
             return
         
-        print(f"Confirmed downbeat at: {self.selected_downbeat:.3f}s")
-        self._close_with_result(self.selected_downbeat)
+        # If only first downbeat is selected, use detected BPM
+        if self.second_downbeat is None:
+            print(f"Using first downbeat at: {self.first_downbeat:.3f}s with detected BPM: {self.detected_bpm:.1f}")
+            result = {
+                'first_downbeat': self.first_downbeat,
+                'bpm': self.detected_bpm
+            }
+        else:
+            print(f"Confirmed: First downbeat at {self.first_downbeat:.3f}s, BPM: {self.calculated_bpm:.1f}")
+            result = {
+                'first_downbeat': self.first_downbeat,
+                'bpm': self.calculated_bpm
+            }
+        
+        self._close_with_result(result)
     
     def _use_auto_detection(self, event):
         """Use automatic downbeat detection"""
@@ -207,18 +299,21 @@ class DownbeatSelector:
         return self.selected_downbeat
 
 
-def select_first_downbeat(audio: np.ndarray, sr: int, track_name: str, beats: np.ndarray) -> Optional[float]:
+def select_first_downbeat(audio: np.ndarray, sr: int, track_name: str, beats: np.ndarray, 
+                         detected_bpm: float, allow_irregular_tempo: bool = False) -> Optional[dict]:
     """
-    Interactive function to select the first downbeat
+    Interactive function to select downbeats and BPM
     
     Args:
         audio: Audio signal
         sr: Sample rate
         track_name: Name of the track for display
         beats: Detected beat positions (in frames)
+        detected_bpm: Originally detected BPM
+        allow_irregular_tempo: If True, allow non-integer BPM values
     
     Returns:
-        Selected time in seconds, None for auto-detection, or 'cancel' for cancelled
+        Dict with 'first_downbeat' and 'bpm', None for auto-detection, or 'cancel' for cancelled
     """
     try:
         # Check if GUI is available and try different backends
@@ -259,7 +354,7 @@ def select_first_downbeat(audio: np.ndarray, sr: int, track_name: str, beats: np
             print("  Falling back to automatic detection...")
             return None
         
-        selector = DownbeatSelector(audio, sr, track_name, beats)
+        selector = DownbeatSelector(audio, sr, track_name, beats, detected_bpm, allow_irregular_tempo)
         
         # Use a result container to capture the selection
         result_container = {'result': None}
