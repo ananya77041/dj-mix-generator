@@ -15,47 +15,92 @@ from beat_utils import BeatAligner
 class MixGenerator:
     """Handles DJ mix generation with transitions and beatmatching"""
     
-    def __init__(self):
+    def __init__(self, tempo_strategy: str = "sequential"):
         self.beat_aligner = BeatAligner()
+        self.tempo_strategy = tempo_strategy
+        self.target_bpm = None  # Will be set based on strategy
+    
+    def calculate_target_bpm(self, tracks: List[Track]):
+        """Calculate target BPM based on tempo strategy"""
+        if self.tempo_strategy == "sequential":
+            # Sequential: use first track's BPM
+            self.target_bpm = tracks[0].bpm
+            print(f"Sequential tempo strategy: Target BPM = {self.target_bpm:.1f} (from first track)")
+        elif self.tempo_strategy == "uniform":
+            # Uniform: use average of all BPMs
+            self.target_bpm = sum(track.bpm for track in tracks) / len(tracks)
+            print(f"Uniform tempo strategy: Target BPM = {self.target_bpm:.1f} (average of all tracks)")
+            bpm_list = [f"{track.bpm:.1f}" for track in tracks]
+            print(f"  Individual BPMs: {', '.join(bpm_list)}")
+        else:
+            raise ValueError(f"Unknown tempo strategy: {self.tempo_strategy}")
         
-    def create_transition(self, track1: Track, track2: Track, transition_duration: float = 30.0) -> Tuple[np.ndarray, np.ndarray]:
+    def create_transition(self, track1: Track, track2: Track, transition_duration: float = 30.0, 
+                         stretch_track1: bool = False) -> Tuple[np.ndarray, np.ndarray, Track]:
         """Create a beat-aligned crossfade transition between two tracks"""
-        print(f"  BPM adjustment: {track1.bpm:.1f} -> {track2.bpm:.1f}")
+        if self.target_bpm is None:
+            raise ValueError("Target BPM not set. Call calculate_target_bpm() first.")
         
-        # Step 1: Time-stretch track2 to match track1's BPM
-        bpm_ratio = track2.bpm / track1.bpm  # Ratio to stretch track2 to match track1's tempo
+        # Determine what needs to be stretched based on tempo strategy
+        if self.tempo_strategy == "sequential":
+            # Sequential: stretch track2 to match track1 (track1 stays at native tempo)
+            print(f"  Sequential mode: {track2.bpm:.1f} -> {track1.bpm:.1f} (track2 stretched)")
+            target_bpm_for_track2 = track1.bpm
+            track1_stretched = track1  # No change to track1
+            track2_stretched = self._stretch_track_to_bpm(track2, target_bpm_for_track2)
+            
+        elif self.tempo_strategy == "uniform":
+            # Uniform: stretch both tracks to target BPM
+            print(f"  Uniform mode: {track1.bpm:.1f} & {track2.bpm:.1f} -> {self.target_bpm:.1f} (both stretched)")
+            
+            if stretch_track1:
+                # Stretch track1 to target BPM (for uniform mode in full mix)
+                track1_stretched = self._stretch_track_to_bpm(track1, self.target_bpm)
+            else:
+                # Track1 already at target BPM (first track in uniform mode)
+                track1_stretched = track1
+                
+            track2_stretched = self._stretch_track_to_bpm(track2, self.target_bpm)
+        
+        return self._create_crossfade(track1_stretched, track2_stretched, transition_duration)
+    
+    def _stretch_track_to_bpm(self, track: Track, target_bpm: float) -> Track:
+        """Stretch a track to match target BPM"""
+        bpm_ratio = track.bpm / target_bpm  # Ratio to stretch to target tempo
         
         if abs(bpm_ratio - 1.0) > 0.05:  # Only stretch if BPMs differ significantly
-            print(f"  Time-stretching track2 by ratio: {bpm_ratio:.3f}")
-            track2_stretched_audio = librosa.effects.time_stretch(track2.audio, rate=1/bpm_ratio)
+            print(f"    Time-stretching {track.filepath.name}: {track.bpm:.1f} -> {target_bpm:.1f} (ratio: {bpm_ratio:.3f})")
+            stretched_audio = librosa.effects.time_stretch(track.audio, rate=bpm_ratio)
             
-            # Create a new track object with stretched audio and updated timing
-            # Note: beats and downbeats need to be adjusted for the new timing
-            stretched_beats = track2.beats * bpm_ratio
-            stretched_downbeats = track2.downbeats * bpm_ratio
+            # Adjust timing information
+            stretched_beats = track.beats / bpm_ratio  # Beats get closer together when tempo increases
+            stretched_downbeats = track.downbeats / bpm_ratio
             
-            track2_stretched = Track(
-                filepath=track2.filepath,
-                audio=track2_stretched_audio,
-                sr=track2.sr,
-                bpm=track1.bpm,  # Now matches track1
-                key=track2.key,
+            return Track(
+                filepath=track.filepath,
+                audio=stretched_audio,
+                sr=track.sr,
+                bpm=target_bpm,
+                key=track.key,
                 beats=stretched_beats,
                 downbeats=stretched_downbeats,
-                duration=len(track2_stretched_audio) / track2.sr
+                duration=len(stretched_audio) / track.sr
             )
         else:
-            track2_stretched = track2
-        
-        # Step 2: Find optimal transition points using downbeat alignment
+            print(f"    {track.filepath.name}: No stretching needed ({track.bpm:.1f} ≈ {target_bpm:.1f})")
+            return track
+    
+    def _create_crossfade(self, track1: Track, track2: Track, transition_duration: float) -> Tuple[np.ndarray, np.ndarray, Track]:
+        """Create crossfade transition between two tempo-matched tracks"""
+        # Find optimal transition points using downbeat alignment
         print(f"  Aligning to downbeats...")
         track1_end_sample, track2_start_sample = self.beat_aligner.find_optimal_transition_points(
-            track1, track2_stretched, transition_duration
+            track1, track2, transition_duration
         )
         
-        # Step 3: Extract beat-aligned audio segments
+        # Extract beat-aligned audio segments
         track1_outro, track2_intro = self.beat_aligner.align_beats_for_transition(
-            track1, track2_stretched, track1_end_sample, track2_start_sample, transition_duration
+            track1, track2, track1_end_sample, track2_start_sample, transition_duration
         )
         
         # Report the alignment
@@ -64,10 +109,10 @@ class MixGenerator:
         print(f"  Track 1 outro starts at: {track1_end_time - transition_duration:.1f}s, ends at: {track1_end_time:.1f}s")
         print(f"  Track 2 intro starts at: {track2_start_time:.1f}s")
         
-        # Step 4: Create crossfade with beat alignment
+        # Create crossfade with beat alignment
         if len(track1_outro) == 0 or len(track2_intro) == 0:
             print("  Warning: Empty audio segments, using fallback transition")
-            return self._create_fallback_transition(track1, track2_stretched, transition_duration)
+            return self._create_fallback_transition(track1, track2, transition_duration)
         
         # Ensure both segments are the same length
         min_length = min(len(track1_outro), len(track2_intro))
@@ -82,9 +127,9 @@ class MixGenerator:
         # Apply crossfade
         transition = track1_outro * fade_out + track2_intro * fade_in
         
-        return transition, track2_stretched
+        return transition, track2
     
-    def _create_fallback_transition(self, track1: Track, track2: Track, transition_duration: float) -> Tuple[np.ndarray, np.ndarray]:
+    def _create_fallback_transition(self, track1: Track, track2: Track, transition_duration: float) -> Tuple[np.ndarray, Track]:
         """
         Fallback transition method using simple time-based alignment
         Used when downbeat alignment fails
@@ -116,20 +161,31 @@ class MixGenerator:
         if len(tracks) < 2:
             raise ValueError("Need at least 2 tracks to create a mix")
         
+        # Calculate target BPM based on strategy
+        self.calculate_target_bpm(tracks)
+        
         if transitions_only:
             print("Generating transitions-only preview with 5s buffers...")
         else:
             print(f"Generating mix with {len(tracks)} tracks...")
-        print(f"Transition duration: {transition_duration}s\n")
+        print(f"Transition duration: {transition_duration}s")
+        print(f"Tempo strategy: {self.tempo_strategy}\n")
         
         if transitions_only:
             return self._generate_transitions_only(tracks, output_path, transition_duration)
         
-        # Start with the first track
-        mix_audio = tracks[0].audio.copy()
-        current_sr = tracks[0].sr
+        # For uniform strategy, stretch the first track to target BPM
+        if self.tempo_strategy == "uniform":
+            first_track = self._stretch_track_to_bpm(tracks[0], self.target_bpm)
+            print(f"Track 1: {first_track.filepath.name} (stretched to target BPM)")
+        else:
+            first_track = tracks[0]
+            print(f"Track 1: {first_track.filepath.name} (native BPM)")
         
-        print(f"Track 1: {tracks[0].filepath.name}")
+        # Start with the first track
+        mix_audio = first_track.audio.copy()
+        current_sr = first_track.sr
+        current_bpm = first_track.bpm
         
         # Add each subsequent track with transitions
         for i in range(1, len(tracks)):
@@ -150,15 +206,18 @@ class MixGenerator:
                 filepath=tracks[i-1].filepath,
                 audio=mix_audio,
                 sr=current_sr,
-                bpm=tracks[i-1].bpm,
+                bpm=current_bpm,  # Use current mix BPM
                 key=tracks[i-1].key,
                 beats=tracks[i-1].beats,
                 downbeats=tracks[i-1].downbeats,
                 duration=len(mix_audio) / current_sr
             )
             
-            # Create transition
-            transition, stretched_track = self.create_transition(prev_track, current_track, transition_duration)
+            # Create transition (stretch_track1 is always False since prev_track is already processed)
+            transition, stretched_track = self.create_transition(prev_track, current_track, transition_duration, stretch_track1=False)
+            
+            # Update current BPM for next iteration
+            current_bpm = stretched_track.bpm
             
             # Remove the outro from the mix and add the transition + new track
             transition_samples = len(transition)
@@ -227,7 +286,7 @@ class MixGenerator:
             )
             
             # Generate the transition
-            transition, stretched_track = self.create_transition(prev_track, next_track, transition_duration)
+            transition, stretched_track = self.create_transition(prev_track, next_track, transition_duration, stretch_track1=False)
             
             # Find the transition points in the original tracks
             track1_end_sample, track2_start_sample = self.beat_aligner.find_optimal_transition_points(

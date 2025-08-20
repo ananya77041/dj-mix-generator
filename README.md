@@ -56,7 +56,8 @@ python dj_mix_generator.py track1.wav track2.wav track3.wav
 This will:
 1. Analyze each track for BPM and key
 2. Create seamless 30-second crossfade transitions
-3. Output a file called `dj_mix.wav`
+3. Use sequential tempo strategy (first track's BPM)
+4. Output a file called `dj_mix.wav`
 
 ### Harmonic Mixing (Key-Based Reordering)
 
@@ -135,6 +136,36 @@ The GUI opens for each track during analysis, allowing you to:
 3. Choose "Confirm" to use your selection, "Auto-Detect" for automatic, or "Cancel"
 
 Manual selections are cached separately from automatic detection!
+
+### Tempo Alignment Strategies
+
+Choose between two tempo alignment strategies:
+
+**Sequential Strategy (Default)**
+```bash
+python dj_mix_generator.py --tempo-strategy=sequential track1.wav track2.wav track3.wav
+```
+
+- Each track is stretched to match the **previous track's tempo**
+- First track plays at its native BPM
+- Final mix BPM = first track's BPM
+- Results in gradual tempo changes throughout the mix
+- Best for preserving the energy and feel of the opening track
+
+**Uniform Strategy**
+```bash
+python dj_mix_generator.py --tempo-strategy=uniform track1.wav track2.wav track3.wav
+```
+
+- All tracks are stretched to match the **average BPM** of all tracks
+- Consistent tempo throughout the entire mix
+- Final mix BPM = average of all track BPMs
+- Best for maintaining steady energy across the entire set
+
+**Example:**
+- Track1: 120 BPM, Track2: 128 BPM, Track3: 132 BPM
+- Sequential: Mix plays at 120 BPM (track1's tempo)
+- Uniform: Mix plays at 126.7 BPM (average tempo)
 
 ### Example Output
 

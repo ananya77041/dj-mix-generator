@@ -16,11 +16,12 @@ from models import Track
 class DJMixGenerator:
     """Main DJ Mix Generator class that coordinates audio analysis and mix generation"""
     
-    def __init__(self, use_cache: bool = True, manual_downbeats: bool = False, allow_irregular_tempo: bool = False):
+    def __init__(self, use_cache: bool = True, manual_downbeats: bool = False, allow_irregular_tempo: bool = False, tempo_strategy: str = "sequential"):
         self.tracks: List[Track] = []
         self.analyzer = AudioAnalyzer(use_cache=use_cache, manual_downbeats=manual_downbeats, allow_irregular_tempo=allow_irregular_tempo)
-        self.mixer = MixGenerator()
+        self.mixer = MixGenerator(tempo_strategy=tempo_strategy)
         self.key_matcher = KeyMatcher()
+        self.tempo_strategy = tempo_strategy
     
     def load_playlist(self, filepaths: List[str]):
         """Load and analyze all tracks in the playlist"""
@@ -107,6 +108,7 @@ def main():
         print("  --transitions-only     Generate only transition sections for testing (with 5s buffers)")
         print("  --manual-downbeats     Use visual interface to manually select downbeats and BPM")
         print("  --irregular-tempo      Allow non-integer BPM values (use with --manual-downbeats)")
+        print("  --tempo-strategy=MODE  Tempo alignment strategy: 'sequential' or 'uniform' (default: sequential)")
         print("  --no-cache             Disable track analysis caching")
         print("  --cache-info           Show cache information and exit")
         print("  --clear-cache          Clear track analysis cache and exit")
@@ -119,6 +121,7 @@ def main():
     manual_downbeats = False
     allow_irregular_tempo = False
     use_cache = True
+    tempo_strategy = "sequential"
     playlist = []
     output_path = "dj_mix.wav"
     
@@ -172,6 +175,15 @@ def main():
             use_cache = False
             args.remove("--no-cache")
         
+        # Check for tempo strategy
+        tempo_strategy_args = [arg for arg in args if arg.startswith("--tempo-strategy=")]
+        if tempo_strategy_args:
+            tempo_strategy = tempo_strategy_args[0].split("=", 1)[1].lower()
+            if tempo_strategy not in ["sequential", "uniform"]:
+                print(f"Error: Invalid tempo strategy '{tempo_strategy}'. Use 'sequential' or 'uniform'.")
+                return 1
+            args.remove(tempo_strategy_args[0])
+        
         # Remaining arguments are track files
         playlist = args
         
@@ -180,7 +192,7 @@ def main():
             return 1
     
     try:
-        dj = DJMixGenerator(use_cache=use_cache, manual_downbeats=manual_downbeats, allow_irregular_tempo=allow_irregular_tempo)
+        dj = DJMixGenerator(use_cache=use_cache, manual_downbeats=manual_downbeats, allow_irregular_tempo=allow_irregular_tempo, tempo_strategy=tempo_strategy)
         dj.load_playlist(playlist)
         
         # Optionally reorder by key
