@@ -103,11 +103,15 @@ class MixGenerator:
                 track, target_bpm
             )
             
+            # Calculate actual BPM from corrected beats for perfect accuracy
+            actual_bpm = self._calculate_actual_bpm_from_beats(corrected_beats, track.sr)
+            print(f"    Final BPM after correction: {actual_bpm:.3f} (target: {target_bpm:.3f})")
+            
             return Track(
                 filepath=track.filepath,
                 audio=stretched_audio,
                 sr=track.sr,
-                bpm=target_bpm,
+                bpm=actual_bpm,  # Use actual BPM, not target BPM
                 key=track.key,
                 beats=corrected_beats,
                 downbeats=corrected_downbeats,
@@ -123,11 +127,16 @@ class MixGenerator:
                 stretched_audio, corrected_beats, corrected_downbeats = self._apply_intelligent_tempo_correction(
                     track, target_bpm  # Use target BPM, not original BPM for true precision
                 )
+                
+                # Calculate actual BPM from corrected beats for perfect accuracy
+                actual_bpm = self._calculate_actual_bpm_from_beats(corrected_beats, track.sr)
+                print(f"    Final BPM after drift correction: {actual_bpm:.3f} (target: {target_bpm:.3f})")
+                
                 return Track(
                     filepath=track.filepath,
                     audio=stretched_audio,
                     sr=track.sr,
-                    bpm=target_bpm,  # Use target BPM for perfect matching
+                    bpm=actual_bpm,  # Use actual BPM, not target BPM
                     key=track.key,
                     beats=corrected_beats,
                     downbeats=corrected_downbeats,
@@ -278,6 +287,48 @@ class MixGenerator:
             corrected_downbeats_frames = track.downbeats
         
         return corrected_audio, corrected_beats_frames, corrected_downbeats_frames
+    
+    def _calculate_actual_bpm_from_beats(self, beats: np.ndarray, sr: int) -> float:
+        """
+        Calculate actual BPM from corrected beat positions for perfect accuracy.
+        
+        This function calculates the real BPM by measuring the time intervals between
+        corrected beats, ensuring the returned BPM reflects the actual tempo after
+        time-stretching rather than assuming the target BPM was achieved perfectly.
+        """
+        if len(beats) < 2:
+            print(f"      Warning: Not enough beats ({len(beats)}) to calculate BPM")
+            return 120.0  # Default fallback BPM
+        
+        # Convert beat frames to sample positions
+        beat_samples = librosa.frames_to_samples(beats, hop_length=512)
+        
+        # Calculate time intervals between consecutive beats
+        beat_intervals_samples = np.diff(beat_samples)
+        
+        # Convert to seconds
+        beat_intervals_seconds = beat_intervals_samples / sr
+        
+        # Remove outliers (beats with intervals way off from the median)
+        median_interval = np.median(beat_intervals_seconds)
+        valid_intervals = beat_intervals_seconds[
+            (beat_intervals_seconds >= median_interval * 0.5) & 
+            (beat_intervals_seconds <= median_interval * 2.0)
+        ]
+        
+        if len(valid_intervals) == 0:
+            print(f"      Warning: No valid beat intervals found, using median")
+            valid_intervals = [median_interval]
+        
+        # Calculate average beat interval (seconds per beat)
+        avg_beat_interval = np.mean(valid_intervals)
+        
+        # Convert to BPM (beats per minute)
+        actual_bpm = 60.0 / avg_beat_interval
+        
+        print(f"      BPM calculation: {len(valid_intervals)} intervals, avg {avg_beat_interval:.4f}s/beat -> {actual_bpm:.3f} BPM")
+        
+        return actual_bpm
     
     def _create_crossfade(self, track1: Track, track2: Track, transition_duration: float) -> Tuple[np.ndarray, np.ndarray, Track]:
         """Create crossfade transition between two tempo-matched tracks
