@@ -157,7 +157,7 @@ class MixGenerator:
             # Remove the outro from the mix and add the transition + new track
             transition_samples = len(transition)
             mix_audio = mix_audio[:-transition_samples]  # Remove outro
-            mix_audio = np.concatenate([mix_audio, transition, stretched_track[transition_samples:]])
+            mix_audio = np.concatenate([mix_audio, transition, stretched_track.audio[transition_samples:]])
             
             print(f"  Mix length so far: {len(mix_audio) / current_sr / 60:.1f} minutes\n")
         
