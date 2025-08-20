@@ -10,6 +10,7 @@ A modular Python tool to create continuous DJ mixes from WAV files. The program 
 - **Enhanced downbeat detection** optimized for kick drums and percussive elements
 - **Professional DJ transitions** with tracks entering on their first downbeat
 - **Transition preview mode** to test-listen only the transition sections
+- **Intelligent track caching** to avoid re-analyzing the same tracks
 - **Smooth crossfade transitions** with equal-power curves (30 seconds default)
 - **Harmonic mixing** with optional key-based track reordering
 - **Audio normalization** to prevent clipping
@@ -73,21 +74,49 @@ This creates a preview file (`dj_transitions_preview.wav`) containing only the t
 
 Perfect for testing downbeat alignment and transition quality before generating the full mix!
 
+### Track Analysis Caching
+
+The tool automatically caches track analysis results to speed up repeated usage:
+
+```bash
+# View cache information
+python dj_mix_generator.py --cache-info
+
+# Clear all cached analyses
+python dj_mix_generator.py --clear-cache
+
+# Clean up orphaned cache files
+python dj_mix_generator.py --cleanup-cache
+
+# Disable caching for this run
+python dj_mix_generator.py --no-cache track1.wav track2.wav track3.wav
+```
+
+**Cache Benefits:**
+- **Fast re-analysis**: Previously analyzed tracks load instantly from cache
+- **Intelligent identification**: Uses file hash + metadata to detect identical tracks
+- **Automatic management**: Cache is stored in `~/.dj_mix_generator_cache/`
+- **Safe storage**: Metadata (JSON) and audio data (pickle) stored separately
+
 ### Example Output
 
 ```
 Loading playlist with 3 tracks...
 
 Analyzing: track1.wav
+  Performing fresh analysis...
   Detected 42 downbeats using enhanced percussion analysis
+  Cached analysis for track1.wav
   [1/3] BPM: 128.0, Key: G major, Duration: 180.5s, Downbeats: 42
 
 Analyzing: track2.wav
-  Detected 48 downbeats using enhanced percussion analysis
+  ✓ Loaded from cache
   [2/3] BPM: 132.1, Key: A minor, Duration: 210.2s, Downbeats: 48
 
 Analyzing: track3.wav
+  Performing fresh analysis...
   Detected 45 downbeats using enhanced percussion analysis
+  Cached analysis for track3.wav
   [3/3] BPM: 126.8, Key: F major, Duration: 195.7s, Downbeats: 45
 
 Successfully loaded 3 tracks.
@@ -181,6 +210,7 @@ The project is organized into modular components:
 - `beat_utils.py` - BeatAligner class for precise downbeat alignment
 - `mix_generator.py` - MixGenerator class for beat-aligned transitions and mixing  
 - `key_matcher.py` - KeyMatcher class for harmonic mixing and track reordering
+- `track_cache.py` - TrackCache class for persistent analysis caching
 - `dj_mix_generator.py` - Main DJMixGenerator class and CLI interface
 - `requirements.txt` - Python dependencies
 - `README.md` - This documentation

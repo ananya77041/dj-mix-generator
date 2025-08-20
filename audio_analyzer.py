@@ -9,19 +9,31 @@ import os
 from pathlib import Path
 from models import Track
 from scipy.signal import find_peaks
+from track_cache import TrackCache
 
 
 class AudioAnalyzer:
     """Handles audio analysis for BPM, key detection, and beat tracking"""
     
-    def __init__(self):
+    def __init__(self, use_cache: bool = True):
         self.key_names = ['C', 'C#', 'D', 'D#', 'E', 'F', 'F#', 'G', 'G#', 'A', 'A#', 'B']
+        self.use_cache = use_cache
+        self.cache = TrackCache() if use_cache else None
         
     def analyze_track(self, filepath: str) -> Track:
         """Analyze a single audio file for BPM, key, and beat positions"""
         print(f"Analyzing: {os.path.basename(filepath)}")
         
+        # Check cache first
+        if self.use_cache and self.cache:
+            cached_track = self.cache.get_cached_analysis(filepath)
+            if cached_track is not None:
+                print(f"  ✓ Loaded from cache")
+                return cached_track
+        
         try:
+            print(f"  Performing fresh analysis...")
+            
             # Load audio file
             audio, sr = librosa.load(filepath, sr=None)
             duration = len(audio) / sr
@@ -37,7 +49,7 @@ class AudioAnalyzer:
             chroma = librosa.feature.chroma_stft(y=audio, sr=sr)
             key = self._estimate_key(chroma)
             
-            return Track(
+            track = Track(
                 filepath=Path(filepath),
                 audio=audio,
                 sr=sr,
@@ -47,6 +59,13 @@ class AudioAnalyzer:
                 downbeats=downbeats,
                 duration=duration
             )
+            
+            # Cache the results
+            if self.use_cache and self.cache:
+                self.cache.cache_analysis(track)
+            
+            return track
+            
         except Exception as e:
             print(f"Error analyzing {filepath}: {e}")
             raise

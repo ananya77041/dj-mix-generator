@@ -16,9 +16,9 @@ from models import Track
 class DJMixGenerator:
     """Main DJ Mix Generator class that coordinates audio analysis and mix generation"""
     
-    def __init__(self):
+    def __init__(self, use_cache: bool = True):
         self.tracks: List[Track] = []
-        self.analyzer = AudioAnalyzer()
+        self.analyzer = AudioAnalyzer(use_cache=use_cache)
         self.mixer = MixGenerator()
         self.key_matcher = KeyMatcher()
     
@@ -70,6 +70,31 @@ class DJMixGenerator:
     def generate_mix(self, output_path: str, transition_duration: float = 30.0, transitions_only: bool = False):
         """Generate the complete DJ mix or just transitions preview"""
         self.mixer.generate_mix(self.tracks, output_path, transition_duration, transitions_only)
+    
+    def get_cache_info(self):
+        """Display information about the track analysis cache"""
+        if self.analyzer.cache:
+            info = self.analyzer.cache.get_cache_info()
+            print("\n📁 Track Analysis Cache Info:")
+            print(f"  Cached tracks: {info['cached_tracks']}")
+            print(f"  Cache size: {info['cache_size_mb']:.1f} MB")
+            print(f"  Cache directory: {info['cache_directory']}")
+        else:
+            print("Cache is disabled")
+    
+    def clear_cache(self):
+        """Clear the track analysis cache"""
+        if self.analyzer.cache:
+            self.analyzer.cache.clear_cache()
+        else:
+            print("Cache is disabled")
+    
+    def cleanup_cache(self):
+        """Clean up orphaned cache files"""
+        if self.analyzer.cache:
+            self.analyzer.cache.cleanup_orphaned_files()
+        else:
+            print("Cache is disabled")
 
 
 def main():
@@ -80,13 +105,34 @@ def main():
         print("\nOptions:")
         print("  --reorder-by-key       Reorder tracks for optimal harmonic mixing")
         print("  --transitions-only     Generate only transition sections for testing (with 5s buffers)")
+        print("  --no-cache             Disable track analysis caching")
+        print("  --cache-info           Show cache information and exit")
+        print("  --clear-cache          Clear track analysis cache and exit")
+        print("  --cleanup-cache        Clean up orphaned cache files and exit")
         return
     
     # Parse command line options
     reorder_by_key = False
     transitions_only = False
+    use_cache = True
     playlist = []
     output_path = "dj_mix.wav"
+    
+    # Handle cache management commands first
+    if "--cache-info" in sys.argv:
+        dj = DJMixGenerator(use_cache=True)
+        dj.get_cache_info()
+        return 0
+        
+    if "--clear-cache" in sys.argv:
+        dj = DJMixGenerator(use_cache=True)
+        dj.clear_cache()
+        return 0
+        
+    if "--cleanup-cache" in sys.argv:
+        dj = DJMixGenerator(use_cache=True)
+        dj.cleanup_cache()
+        return 0
     
     if sys.argv[1] == "--demo":
         # Demo mode - use example tracks (you'll need to provide these)
@@ -110,6 +156,10 @@ def main():
             args.remove("--transitions-only")
             output_path = "dj_transitions_preview.wav"  # Different filename for transitions
         
+        if "--no-cache" in args:
+            use_cache = False
+            args.remove("--no-cache")
+        
         # Remaining arguments are track files
         playlist = args
         
@@ -118,7 +168,7 @@ def main():
             return 1
     
     try:
-        dj = DJMixGenerator()
+        dj = DJMixGenerator(use_cache=use_cache)
         dj.load_playlist(playlist)
         
         # Optionally reorder by key
