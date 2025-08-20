@@ -9,44 +9,72 @@ import numpy as np
 import os
 from typing import List, Tuple
 from models import Track
+from beat_utils import BeatAligner
 
 
 class MixGenerator:
     """Handles DJ mix generation with transitions and beatmatching"""
     
     def __init__(self):
-        pass
+        self.beat_aligner = BeatAligner()
         
     def create_transition(self, track1: Track, track2: Track, transition_duration: float = 30.0) -> Tuple[np.ndarray, np.ndarray]:
-        """Create a crossfade transition between two tracks"""
+        """Create a beat-aligned crossfade transition between two tracks"""
         print(f"  BPM adjustment: {track1.bpm:.1f} -> {track2.bpm:.1f}")
         
-        # Simple beatmatching - align BPMs by time-stretching
+        # Step 1: Time-stretch track2 to match track1's BPM
         bpm_ratio = track2.bpm / track1.bpm  # Ratio to stretch track2 to match track1's tempo
         
-        # Time-stretch track2 to match track1's BPM (simplified approach)
         if abs(bpm_ratio - 1.0) > 0.05:  # Only stretch if BPMs differ significantly
             print(f"  Time-stretching track2 by ratio: {bpm_ratio:.3f}")
-            track2_stretched = librosa.effects.time_stretch(track2.audio, rate=1/bpm_ratio)
+            track2_stretched_audio = librosa.effects.time_stretch(track2.audio, rate=1/bpm_ratio)
+            
+            # Create a new track object with stretched audio and updated timing
+            # Note: beats and downbeats need to be adjusted for the new timing
+            stretched_beats = track2.beats * bpm_ratio
+            stretched_downbeats = track2.downbeats * bpm_ratio
+            
+            track2_stretched = Track(
+                filepath=track2.filepath,
+                audio=track2_stretched_audio,
+                sr=track2.sr,
+                bpm=track1.bpm,  # Now matches track1
+                key=track2.key,
+                beats=stretched_beats,
+                downbeats=stretched_downbeats,
+                duration=len(track2_stretched_audio) / track2.sr
+            )
         else:
-            track2_stretched = track2.audio.copy()
+            track2_stretched = track2
         
-        # Calculate transition samples
-        transition_samples = int(transition_duration * track1.sr)
+        # Step 2: Find optimal transition points using downbeat alignment
+        print(f"  Aligning to downbeats...")
+        track1_end_sample, track2_start_sample = self.beat_aligner.find_optimal_transition_points(
+            track1, track2_stretched, transition_duration
+        )
         
-        # Get the outro of track1 and intro of track2
-        track1_outro = track1.audio[-transition_samples:]
-        track2_intro = track2_stretched[:transition_samples]
+        # Step 3: Extract beat-aligned audio segments
+        track1_outro, track2_intro = self.beat_aligner.align_beats_for_transition(
+            track1, track2_stretched, track1_end_sample, track2_start_sample, transition_duration
+        )
+        
+        # Report the alignment
+        track1_end_time = track1_end_sample / track1.sr
+        track2_start_time = track2_start_sample / track2.sr
+        print(f"  Track 1 outro starts at: {track1_end_time - transition_duration:.1f}s, ends at: {track1_end_time:.1f}s")
+        print(f"  Track 2 intro starts at: {track2_start_time:.1f}s")
+        
+        # Step 4: Create crossfade with beat alignment
+        if len(track1_outro) == 0 or len(track2_intro) == 0:
+            print("  Warning: Empty audio segments, using fallback transition")
+            return self._create_fallback_transition(track1, track2_stretched, transition_duration)
         
         # Ensure both segments are the same length
         min_length = min(len(track1_outro), len(track2_intro))
-        if min_length < transition_samples // 2:
-            print(f"  Warning: Short transition ({min_length/track1.sr:.1f}s)")
-        
         track1_outro = track1_outro[:min_length]
         track2_intro = track2_intro[:min_length]
         
-        # Create crossfade curves (equal power crossfade)
+        # Create equal-power crossfade curves
         fade_samples = min_length
         fade_out = np.cos(np.linspace(0, np.pi/2, fade_samples))
         fade_in = np.sin(np.linspace(0, np.pi/2, fade_samples))
@@ -55,6 +83,33 @@ class MixGenerator:
         transition = track1_outro * fade_out + track2_intro * fade_in
         
         return transition, track2_stretched
+    
+    def _create_fallback_transition(self, track1: Track, track2: Track, transition_duration: float) -> Tuple[np.ndarray, np.ndarray]:
+        """
+        Fallback transition method using simple time-based alignment
+        Used when downbeat alignment fails
+        """
+        print("  Using fallback transition method")
+        
+        transition_samples = int(transition_duration * track1.sr)
+        
+        # Simple approach: use end of track1 and beginning of track2
+        track1_outro = track1.audio[-transition_samples:] if len(track1.audio) >= transition_samples else track1.audio
+        track2_intro = track2.audio[:transition_samples] if len(track2.audio) >= transition_samples else track2.audio
+        
+        # Ensure both segments are the same length
+        min_length = min(len(track1_outro), len(track2_intro))
+        track1_outro = track1_outro[:min_length]
+        track2_intro = track2_intro[:min_length]
+        
+        # Create crossfade
+        fade_samples = min_length
+        fade_out = np.cos(np.linspace(0, np.pi/2, fade_samples))
+        fade_in = np.sin(np.linspace(0, np.pi/2, fade_samples))
+        
+        transition = track1_outro * fade_out + track2_intro * fade_in
+        
+        return transition, track2
     
     def generate_mix(self, tracks: List[Track], output_path: str, transition_duration: float = 30.0):
         """Generate the complete DJ mix"""
@@ -92,6 +147,7 @@ class MixGenerator:
                 bpm=tracks[i-1].bpm,
                 key=tracks[i-1].key,
                 beats=tracks[i-1].beats,
+                downbeats=tracks[i-1].downbeats,
                 duration=len(mix_audio) / current_sr
             )
             

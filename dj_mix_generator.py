@@ -35,7 +35,8 @@ class DJMixGenerator:
             try:
                 track = self.analyzer.analyze_track(filepath)
                 self.tracks.append(track)
-                print(f"  [{i}/{len(filepaths)}] BPM: {track.bpm:.1f}, Key: {track.key}, Duration: {track.duration:.1f}s\n")
+                downbeat_count = len(track.downbeats) if len(track.downbeats) > 0 else 0
+                print(f"  [{i}/{len(filepaths)}] BPM: {track.bpm:.1f}, Key: {track.key}, Duration: {track.duration:.1f}s, Downbeats: {downbeat_count}\n")
             except Exception as e:
                 print(f"Skipping {filepath} due to error: {e}\n")
         

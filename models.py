@@ -17,4 +17,5 @@ class Track:
     bpm: float
     key: str
     beats: np.ndarray
+    downbeats: np.ndarray
     duration: float

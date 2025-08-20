@@ -7,6 +7,8 @@ A modular Python tool to create continuous DJ mixes from WAV files. The program 
 - **Automatic BPM detection** using librosa's beat tracking
 - **Musical key estimation** with chromagram analysis
 - **Beat matching** via time-stretching to align tempos
+- **Downbeat detection** for precise measure-aligned transitions
+- **Professional DJ transitions** with tracks entering on their first downbeat
 - **Smooth crossfade transitions** with equal-power curves (30 seconds default)
 - **Harmonic mixing** with optional key-based track reordering
 - **Audio normalization** to prevent clipping
@@ -62,13 +64,13 @@ The key matching uses Circle of Fifths relationships:
 Loading playlist with 3 tracks...
 
 Analyzing: track1.wav
-  [1/3] BPM: 128.0, Key: G major, Duration: 180.5s
+  [1/3] BPM: 128.0, Key: G major, Duration: 180.5s, Downbeats: 42
 
 Analyzing: track2.wav
-  [2/3] BPM: 132.1, Key: A minor, Duration: 210.2s
+  [2/3] BPM: 132.1, Key: A minor, Duration: 210.2s, Downbeats: 48
 
 Analyzing: track3.wav
-  [3/3] BPM: 126.8, Key: F major, Duration: 195.7s
+  [3/3] BPM: 126.8, Key: F major, Duration: 195.7s, Downbeats: 45
 
 Successfully loaded 3 tracks.
 
@@ -87,11 +89,17 @@ Track 1: track1.wav
 Track 2: track2.wav
   BPM adjustment: 128.0 -> 132.1
   Time-stretching track2 by ratio: 1.032
+  Aligning to downbeats...
+  Track 1 outro starts at: 172.5s, ends at: 202.5s
+  Track 2 intro starts at: 4.2s
   Mix length so far: 6.2 minutes
 
 Track 3: track3.wav
   BPM adjustment: 132.1 -> 126.8
   Time-stretching track3 by ratio: 0.960
+  Aligning to downbeats...
+  Track 2 outro starts at: 202.1s, ends at: 232.1s
+  Track 3 intro starts at: 3.8s
   Mix length so far: 9.4 minutes
 
 Saving mix to: dj_mix.wav
@@ -108,17 +116,24 @@ File size: 82.3 MB
    - BPM (beats per minute) using onset detection
    - Musical key using chromagram analysis
    - Beat positions for precise alignment
+   - Downbeat positions (strong beats marking measure boundaries)
 
 2. **Beat Matching**: When transitioning between tracks:
    - Time-stretches the incoming track to match the current tempo
    - Preserves pitch while adjusting speed
 
-3. **Crossfading**: Creates smooth transitions using:
+3. **Downbeat Alignment**: Professional DJ-style transitions:
+   - Detects downbeats using spectral analysis and beat strength
+   - Finds optimal outro point in current track (ending on downbeat)
+   - Finds optimal intro point in next track (starting on downbeat)
+   - Ensures next track enters precisely on its first strong downbeat
+
+4. **Crossfading**: Creates smooth transitions using:
    - Equal-power crossfade curves (cosine/sine)
    - 30-second default transition duration
-   - Aligned beat positions for seamless mixing
+   - Beat-aligned segments for seamless mixing
 
-4. **Audio Processing**: 
+5. **Audio Processing**: 
    - Handles different sample rates via resampling
    - Normalizes final output to prevent clipping
    - Maintains audio quality throughout the process
@@ -128,9 +143,9 @@ File size: 82.3 MB
 This is a basic implementation with some limitations:
 
 - **Simple key detection**: Uses basic chromagram analysis (not as accurate as professional tools)
-- **No harmonic mixing**: Doesn't consider key compatibility for transitions
-- **Fixed crossfade**: Uses simple linear crossfades (no EQ matching or advanced techniques)
-- **Beat alignment**: Basic tempo matching without precise beat alignment
+- **Basic downbeat detection**: Uses spectral analysis but may not be 100% accurate for complex music
+- **Fixed crossfade**: Uses simple equal-power crossfades (no EQ matching or advanced techniques)
+- **Time signature assumption**: Assumes 4/4 time signature for downbeat detection
 - **WAV only**: Currently only supports WAV files
 
 ## Project Structure
@@ -138,8 +153,9 @@ This is a basic implementation with some limitations:
 The project is organized into modular components:
 
 - `models.py` - Track dataclass definition
-- `audio_analyzer.py` - AudioAnalyzer class for BPM and key detection
-- `mix_generator.py` - MixGenerator class for transitions and mixing
+- `audio_analyzer.py` - AudioAnalyzer class for BPM, key detection, and downbeat analysis
+- `beat_utils.py` - BeatAligner class for precise downbeat alignment
+- `mix_generator.py` - MixGenerator class for beat-aligned transitions and mixing  
 - `key_matcher.py` - KeyMatcher class for harmonic mixing and track reordering
 - `dj_mix_generator.py` - Main DJMixGenerator class and CLI interface
 - `requirements.txt` - Python dependencies
