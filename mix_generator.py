@@ -1314,7 +1314,7 @@ class MixGenerator:
             # Update current BPM for next iteration
             current_bpm = stretched_track.bpm
             
-            # EXACT STEP-BY-STEP PROCESS:
+            # EXACT STEP-BY-STEP PROCESS WITH PERFECT SAMPLE CONTINUITY:
             # 1. Calculate and store length of first track (current accumulated mix)
             first_track_length = len(mix_audio)
             
@@ -1324,27 +1324,41 @@ class MixGenerator:
             # 3. Calculate and store length of second track
             second_track_length = len(track2_audio)
             
-            # 4. Remove length of transition from end of first track and store snippet
-            first_track_snippet = mix_audio[:-transition_length]
+            # Get the actual transition boundaries used by the beat aligner
+            track1_end_sample, track2_start_sample = self.beat_aligner.find_optimal_transition_points(
+                actual_prev_track, stretched_track, transition_duration
+            )
             
-            # 5. Remove length of transition from beginning of second track and store snippet  
-            second_track_snippet = track2_audio[transition_length:]
+            # 4. Remove the exact outro segment that was used in the transition from end of first track
+            # The outro starts at (track1_end_sample - transition_length) within the previous track
+            outro_start_in_mix = first_track_length - (len(actual_prev_track.audio) - max(0, track1_end_sample - transition_length))
+            outro_start_in_mix = max(0, outro_start_in_mix)
+            first_track_snippet = mix_audio[:outro_start_in_mix]
             
-            # 6. Concatenate snippet of first track, transition, and snippet of second track
+            # 5. Remove the exact intro segment that was used in the transition from beginning of second track
+            # The intro ends at (track2_start_sample + transition_length) within the second track
+            intro_end_in_track2 = track2_start_sample + transition_length
+            second_track_snippet = track2_audio[intro_end_in_track2:]
+            
+            # 6. Concatenate with perfect sample continuity:
+            # - First track snippet ends exactly where transition begins
+            # - Transition picks up right where first track snippet left off
+            # - Second track snippet starts exactly where transition ends
             mix_audio = np.concatenate([
-                first_track_snippet,  # First track minus outro
-                transition,           # The transition
-                second_track_snippet  # Second track minus intro
+                first_track_snippet,  # First track up to transition start
+                transition,           # The transition (seamless continuation)
+                second_track_snippet  # Second track from transition end
             ])
             
-            print(f"  Track {i+1} mixing process:")
+            print(f"  Track {i+1} mixing with perfect sample continuity:")
             print(f"    1. First track length: {first_track_length} samples ({first_track_length/current_sr:.1f}s)")
             print(f"    2. Transition length: {transition_length} samples ({transition_length/current_sr:.1f}s)")
             print(f"    3. Second track length: {second_track_length} samples ({second_track_length/current_sr:.1f}s)")
-            print(f"    4. First track snippet: {len(first_track_snippet)} samples")
-            print(f"    5. Second track snippet: {len(second_track_snippet)} samples")
+            print(f"    4. First track snippet (to sample {outro_start_in_mix}): {len(first_track_snippet)} samples")
+            print(f"    5. Second track snippet (from sample {intro_end_in_track2}): {len(second_track_snippet)} samples")
             print(f"    6. Final mix: {len(mix_audio)} samples ({len(mix_audio)/current_sr/60:.1f} min)")
             print(f"       = {len(first_track_snippet)} + {transition_length} + {len(second_track_snippet)}")
+            print(f"    Transition boundaries: track1[{track1_end_sample - transition_length}:{track1_end_sample}] → track2[{track2_start_sample}:{intro_end_in_track2}]")
             
             print(f"  Mix length so far: {len(mix_audio) / current_sr / 60:.1f} minutes\n")
         
