@@ -164,7 +164,7 @@ class BeatAligner:
                                  transition_duration: float) -> Tuple[np.ndarray, np.ndarray]:
         """
         Extract and align audio segments for perfect beat-matched transition
-        Returns (track1_outro, track2_intro) with precise downbeat alignment
+        Returns (track1_outro, track2_intro) with precise beat-by-beat alignment
         """
         transition_samples = int(transition_duration * track1.sr)
         
@@ -173,7 +173,6 @@ class BeatAligner:
         track1_outro = track1.audio[outro_start:track1_end_sample]
         
         # Extract intro from track2 (starting from the aligned position)
-        # Note: track2_start_sample has already been aligned for perfect downbeat sync
         intro_end = min(len(track2.audio), track2_start_sample + transition_samples)
         track2_intro = track2.audio[track2_start_sample:intro_end]
         
@@ -186,10 +185,253 @@ class BeatAligner:
         track1_outro = track1_outro[:min_length]
         track2_intro = track2_intro[:min_length]
         
-        # Verify downbeat alignment (for debugging)
-        self._verify_downbeat_alignment(track1, track2, track1_end_sample, track2_start_sample, min_length)
+        # Apply perfect beat-by-beat alignment throughout the transition
+        track1_outro_aligned, track2_intro_aligned = self._apply_beat_by_beat_alignment(
+            track1, track2, track1_outro, track2_intro, outro_start, track2_start_sample
+        )
         
-        return track1_outro, track2_intro
+        # Verify alignment quality
+        self._verify_perfect_alignment(track1, track2, track1_end_sample, track2_start_sample, len(track1_outro_aligned))
+        
+        return track1_outro_aligned, track2_intro_aligned
+    
+    def _apply_beat_by_beat_alignment(self, track1: Track, track2: Track, 
+                                    track1_outro: np.ndarray, track2_intro: np.ndarray,
+                                    outro_start: int, track2_start_sample: int) -> Tuple[np.ndarray, np.ndarray]:
+        """
+        Apply perfect beat-by-beat alignment throughout the transition period.
+        Uses micro-stretching and phase alignment to ensure every beat matches.
+        """
+        try:
+            print("  Applying perfect beat-by-beat alignment...")
+            
+            # Convert beat positions to samples relative to the segments
+            track1_downbeats_samples = librosa.frames_to_samples(track1.downbeats, hop_length=512)
+            track2_downbeats_samples = librosa.frames_to_samples(track2.downbeats, hop_length=512)
+            track1_beats_samples = librosa.frames_to_samples(track1.beats, hop_length=512)
+            track2_beats_samples = librosa.frames_to_samples(track2.beats, hop_length=512)
+            
+            # Find beats within the transition segments
+            track1_segment_beats = track1_beats_samples[
+                (track1_beats_samples >= outro_start) & 
+                (track1_beats_samples <= outro_start + len(track1_outro))
+            ] - outro_start  # Make relative to segment start
+            
+            track2_segment_beats = track2_beats_samples[
+                (track2_beats_samples >= track2_start_sample) & 
+                (track2_beats_samples <= track2_start_sample + len(track2_intro))
+            ] - track2_start_sample  # Make relative to segment start
+            
+            # Find downbeats within the transition segments
+            track1_segment_downbeats = track1_downbeats_samples[
+                (track1_downbeats_samples >= outro_start) & 
+                (track1_downbeats_samples <= outro_start + len(track1_outro))
+            ] - outro_start
+            
+            track2_segment_downbeats = track2_downbeats_samples[
+                (track2_downbeats_samples >= track2_start_sample) & 
+                (track2_downbeats_samples <= track2_start_sample + len(track2_intro))
+            ] - track2_start_sample
+            
+            if len(track1_segment_beats) == 0 or len(track2_segment_beats) == 0:
+                print("  Warning: No beats found in transition segments, using original audio")
+                return track1_outro, track2_intro
+            
+            # Create ideal beat grid based on track1's tempo (the reference)
+            beats_per_second = track1.bpm / 60.0
+            samples_per_beat = track1.sr / beats_per_second
+            
+            # Generate ideal beat positions for the transition duration
+            segment_duration = len(track1_outro) / track1.sr
+            ideal_beat_positions = []
+            
+            # Start from the first detected beat position for phase consistency
+            if len(track1_segment_beats) > 0:
+                first_beat_offset = track1_segment_beats[0]
+                current_beat_pos = first_beat_offset
+                
+                while current_beat_pos < len(track1_outro):
+                    ideal_beat_positions.append(current_beat_pos)
+                    current_beat_pos += samples_per_beat
+            
+            ideal_beat_positions = np.array(ideal_beat_positions)
+            
+            if len(ideal_beat_positions) == 0:
+                print("  Warning: No ideal beats generated, using original audio")
+                return track1_outro, track2_intro
+            
+            print(f"    Track1 beats in segment: {len(track1_segment_beats)}")
+            print(f"    Track2 beats in segment: {len(track2_segment_beats)}")
+            print(f"    Ideal beat grid: {len(ideal_beat_positions)} beats")
+            
+            # Apply micro-adjustments to track2 to match the ideal beat grid
+            track2_intro_aligned = self._micro_stretch_to_beat_grid(
+                track2_intro, track2_segment_beats, ideal_beat_positions, track2.sr
+            )
+            
+            # Ensure both tracks are exactly the same length
+            min_length = min(len(track1_outro), len(track2_intro_aligned))
+            track1_outro_final = track1_outro[:min_length]
+            track2_intro_final = track2_intro_aligned[:min_length]
+            
+            print(f"    Final alignment: {min_length} samples ({min_length/track1.sr:.3f}s)")
+            
+            return track1_outro_final, track2_intro_final
+            
+        except Exception as e:
+            print(f"  Warning: Beat-by-beat alignment failed: {e}")
+            print("  Using original audio segments")
+            return track1_outro, track2_intro
+    
+    def _micro_stretch_to_beat_grid(self, audio: np.ndarray, detected_beats: np.ndarray, 
+                                  ideal_beats: np.ndarray, sr: int) -> np.ndarray:
+        """
+        Apply micro-stretching to align detected beats with ideal beat grid.
+        Uses piecewise time-stretching between beat markers.
+        """
+        if len(detected_beats) == 0 or len(ideal_beats) == 0:
+            return audio
+        
+        # Match detected beats to ideal beats (find closest pairs)
+        beat_pairs = []
+        for ideal_beat in ideal_beats:
+            if len(detected_beats) > 0:
+                distances = np.abs(detected_beats - ideal_beat)
+                closest_idx = np.argmin(distances)
+                if distances[closest_idx] < sr * 0.5:  # Within 0.5 seconds
+                    beat_pairs.append((detected_beats[closest_idx], ideal_beat))
+        
+        if len(beat_pairs) < 2:
+            print("    Not enough beat pairs for micro-stretching, using original audio")
+            return audio
+        
+        beat_pairs.sort(key=lambda x: x[0])  # Sort by detected beat position
+        
+        # Apply piecewise stretching between beat pairs
+        stretched_segments = []
+        
+        # Process audio in segments between beats
+        for i in range(len(beat_pairs)):
+            detected_pos, ideal_pos = beat_pairs[i]
+            
+            if i == 0:
+                # First segment: from start to first beat
+                segment_start = 0
+                segment_end = int(detected_pos)
+                target_start = 0
+                target_end = int(ideal_pos)
+            else:
+                # Segments between beats
+                prev_detected, prev_ideal = beat_pairs[i-1]
+                segment_start = int(prev_detected)
+                segment_end = int(detected_pos)
+                target_start = int(prev_ideal)
+                target_end = int(ideal_pos)
+            
+            # Extract segment
+            if segment_end > segment_start and segment_end <= len(audio):
+                segment = audio[segment_start:segment_end]
+                
+                # Calculate stretch ratio
+                original_length = segment_end - segment_start
+                target_length = target_end - target_start
+                
+                if original_length > 0 and target_length > 0:
+                    stretch_ratio = target_length / original_length
+                    
+                    # Only stretch if the ratio is reasonable (between 0.8 and 1.25)
+                    if 0.8 <= stretch_ratio <= 1.25:
+                        try:
+                            stretched_segment = librosa.effects.time_stretch(segment, rate=1/stretch_ratio)
+                            # Ensure target length
+                            if len(stretched_segment) > target_length:
+                                stretched_segment = stretched_segment[:target_length]
+                            elif len(stretched_segment) < target_length:
+                                # Pad with silence if too short
+                                padding = target_length - len(stretched_segment)
+                                stretched_segment = np.pad(stretched_segment, (0, padding), 'constant')
+                        except:
+                            # Fallback: just resize
+                            stretched_segment = np.resize(segment, target_length)
+                    else:
+                        # Stretch ratio too extreme, just resize
+                        stretched_segment = np.resize(segment, target_length)
+                    
+                    stretched_segments.append(stretched_segment)
+        
+        # Handle final segment after last beat
+        if len(beat_pairs) > 0:
+            last_detected, last_ideal = beat_pairs[-1]
+            if int(last_detected) < len(audio):
+                final_segment = audio[int(last_detected):]
+                stretched_segments.append(final_segment)
+        
+        # Combine all stretched segments
+        if stretched_segments:
+            aligned_audio = np.concatenate(stretched_segments)
+            print(f"    Micro-stretching applied: {len(beat_pairs)} beat alignment points")
+            return aligned_audio
+        else:
+            return audio
+    
+    def _verify_perfect_alignment(self, track1: Track, track2: Track, 
+                                track1_end_sample: int, track2_start_sample: int, 
+                                aligned_length: int):
+        """Enhanced verification for perfect beat-by-beat alignment"""
+        try:
+            print("  Verifying perfect beat alignment...")
+            
+            # This is a more thorough verification than the previous method
+            outro_start = max(0, track1_end_sample - aligned_length)
+            
+            # Find all beats during the transition
+            track1_beats_samples = librosa.frames_to_samples(track1.beats, hop_length=512)
+            track2_beats_samples = librosa.frames_to_samples(track2.beats, hop_length=512)
+            
+            # Beats in track1's outro section
+            track1_transition_beats = track1_beats_samples[
+                (track1_beats_samples >= outro_start) & 
+                (track1_beats_samples <= track1_end_sample)
+            ]
+            
+            # Beats in track2's intro section (adjusted for start position)
+            track2_absolute_beats = track2_beats_samples + track2_start_sample
+            track2_transition_beats = track2_absolute_beats[
+                (track2_absolute_beats >= outro_start) & 
+                (track2_absolute_beats <= outro_start + aligned_length)
+            ]
+            
+            if len(track1_transition_beats) > 0 and len(track2_transition_beats) > 0:
+                # Calculate beat alignment accuracy
+                total_offset = 0
+                matches = 0
+                
+                for t1_beat in track1_transition_beats:
+                    # Find closest t2 beat
+                    distances = np.abs(track2_transition_beats - t1_beat)
+                    if len(distances) > 0:
+                        min_distance = np.min(distances)
+                        total_offset += min_distance / track1.sr * 1000  # Convert to ms
+                        matches += 1
+                
+                if matches > 0:
+                    avg_offset = total_offset / matches
+                    print(f"    Beat alignment quality: {avg_offset:.1f}ms average offset")
+                    print(f"    Aligned beats: {matches} pairs")
+                    
+                    if avg_offset < 5:
+                        print("    ✓ Excellent beat alignment achieved")
+                    elif avg_offset < 15:
+                        print("    ✓ Good beat alignment achieved")
+                    else:
+                        print("    ⚠ Beat alignment could be improved")
+                else:
+                    print("    ⚠ No beat pairs found for verification")
+            else:
+                print("    ⚠ Insufficient beats for alignment verification")
+                
+        except Exception as e:
+            print(f"    Warning: Alignment verification failed: {e}")
     
     def _verify_downbeat_alignment(self, track1: Track, track2: Track, 
                                  track1_end_sample: int, track2_start_sample: int, 
