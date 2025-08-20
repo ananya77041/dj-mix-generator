@@ -147,27 +147,43 @@ Manual selections are cached separately from automatic detection!
 
 ### Interactive Beatgrid Alignment
 
-For ultimate precision in beat matching, use interactive beatgrid alignment:
+For ultimate precision in beat matching, use **GPU-accelerated** interactive beatgrid alignment:
 
 ```bash
 python dj_mix_generator.py --interactive-beats track1.wav track2.wav track3.wav
 ```
 
-**Visual Beatgrid Interface:**
+**🚀 Professional GPU-Accelerated Interface (Dear PyGui):**
+- **60+ FPS real-time performance** with GPU acceleration
+- **Professional dark theme** resembling modern DJ software
+- **3-step workflow** for precise track-by-track adjustment
+- **Live audio playback** with scrolling position indicator
+- **Real-time BPM adjustment** with immediate visual feedback
+- **Beat stretching** by clicking and dragging downbeat lines
+- **Zero UI blocking** during audio playback and visualization
+
+**Professional Features:**
+- **Step 1**: Adjust Track 1 beatgrid with live playback and BPM control
+- **Step 2**: Adjust Track 2 beatgrid with live playback and BPM control  
+- **Step 3**: Final alignment view with both tracks synchronized
+- **Auto-Align**: Automatically find optimal beat alignment
+- **Volume Control**: Adjust playback volume during alignment
+- **Quality Metrics**: Real-time alignment quality feedback
+
+**📊 Fallback Interface (matplotlib):**
+If Dear PyGui is not available, falls back to matplotlib-based interface:
 - Shows waveforms of both tracks overlaid during each transition
-- **Blue lines**: Track 1 beats (reference, fixed)
-- **Purple lines**: Track 1 downbeats (reference, fixed)  
-- **Orange lines**: Track 2 beats (draggable for alignment)
-- **Green lines**: Track 2 downbeats (draggable for alignment)
+- **Blue lines**: Track 1 beats, **Purple lines**: Track 1 downbeats  
+- **Orange lines**: Track 2 beats, **Green lines**: Track 2 downbeats
+- **Click & Drag**: Drag lines to align beats manually
 - **Real-time feedback**: Alignment quality shown in milliseconds
 
-**Interactive Features:**
-- **Click & Drag**: Click near orange/green lines and drag to align
-- **Auto-Align**: Automatically find the best alignment
-- **Reset**: Return to original computer-detected alignment
-- **Live Preview**: See alignment quality update in real-time
+**Installation for GPU Performance:**
+```bash
+pip install dearpygui>=1.10.0
+```
 
-Perfect for fine-tuning transitions when automatic detection isn't quite right!
+Perfect for professional-level beat matching with real-time feedback!
 
 ### Tempo Alignment Strategies
 

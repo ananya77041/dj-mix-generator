@@ -1172,6 +1172,7 @@ def align_beatgrids_interactive(track1: Track, track2: Track, track1_outro: np.n
                                outro_start: int, track2_start_sample: int, transition_duration: float) -> float:
     """
     Interactive function to align beatgrids between two tracks
+    Uses GPU-accelerated Dear PyGui interface for professional performance
     
     Args:
         track1: First track (reference)
@@ -1185,6 +1186,21 @@ def align_beatgrids_interactive(track1: Track, track2: Track, track1_outro: np.n
     Returns:
         Time offset in seconds to apply to track2 for perfect alignment
     """
+    
+    # Try Dear PyGui first (recommended for best performance)
+    try:
+        from beatgrid_gui_dearpygui import align_beatgrids_interactive as dearpygui_align
+        print("  🚀 Using Dear PyGui for GPU-accelerated beatgrid alignment")
+        return dearpygui_align(track1, track2, track1_outro, track2_intro, 
+                              outro_start, track2_start_sample, transition_duration)
+    except ImportError:
+        print("  ⚠ Dear PyGui not available - install with: pip install dearpygui>=1.10.0")
+        print("  📉 Falling back to matplotlib-based interface (slower performance)")
+    except Exception as e:
+        print(f"  ❌ Dear PyGui interface failed: {e}")
+        print("  📉 Falling back to matplotlib-based interface")
+    
+    # Fallback to matplotlib-based interface
     try:
         # Check if GUI is available and try different backends
         import matplotlib
@@ -1232,7 +1248,8 @@ def align_beatgrids_interactive(track1: Track, track2: Track, track1_outro: np.n
             result_container['result'] = result
         
         # Show the aligner
-        print(f"\\n🎵 Opening interactive beatgrid aligner")
+        print(f"\\n📊 Opening matplotlib-based beatgrid aligner")
+        print("Note: For better performance, install Dear PyGui: pip install dearpygui>=1.10.0")
         print("Drag the orange/green lines to align Track 2 beats with Track 1...")
         
         aligner.show(callback_func=capture_result)
