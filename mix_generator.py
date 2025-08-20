@@ -20,6 +20,21 @@ class MixGenerator:
         self.tempo_strategy = tempo_strategy
         self.target_bpm = None  # Will be set based on strategy
     
+    def measures_to_samples(self, measures: int, bpm: float, sr: int, beats_per_measure: int = 4) -> int:
+        """Convert measures to audio samples based on BPM and sample rate"""
+        # Calculate total beats in the measures
+        total_beats = measures * beats_per_measure
+        # Calculate seconds for these beats
+        seconds = (total_beats * 60.0) / bpm
+        # Convert to samples
+        return int(seconds * sr)
+    
+    def samples_to_measures(self, samples: int, bpm: float, sr: int, beats_per_measure: int = 4) -> float:
+        """Convert audio samples to measures based on BPM and sample rate"""
+        seconds = samples / sr
+        total_beats = (seconds * bpm) / 60.0
+        return total_beats / beats_per_measure
+    
     def calculate_target_bpm(self, tracks: List[Track]):
         """Calculate target BPM based on tempo strategy"""
         if self.tempo_strategy == "sequential":
@@ -156,7 +171,7 @@ class MixGenerator:
         
         return transition, track2
     
-    def generate_mix(self, tracks: List[Track], output_path: str, transition_duration: float = 30.0, transitions_only: bool = False):
+    def generate_mix(self, tracks: List[Track], output_path: str, transition_duration: float = None, transition_measures: int = None, transitions_only: bool = False):
         """Generate the complete DJ mix or just the transitions"""
         if len(tracks) < 2:
             raise ValueError("Need at least 2 tracks to create a mix")
@@ -164,15 +179,34 @@ class MixGenerator:
         # Calculate target BPM based on strategy
         self.calculate_target_bpm(tracks)
         
+        # Determine transition duration - convert measures to seconds if needed
+        if transition_measures is not None:
+            # Convert measures to seconds using target BPM
+            beats_per_measure = 4
+            total_beats = transition_measures * beats_per_measure
+            transition_duration = (total_beats * 60.0) / self.target_bpm
+            transition_mode = f"{transition_measures} measures ({transition_duration:.1f}s at {self.target_bpm:.1f} BPM)"
+        elif transition_duration is not None:
+            # Convert seconds to measures for display
+            beats = (transition_duration * self.target_bpm) / 60.0
+            measures = beats / 4  # Assume 4/4 time
+            transition_mode = f"{transition_duration}s ({measures:.1f} measures at {self.target_bpm:.1f} BPM)"
+        else:
+            # Default fallback
+            transition_duration = 30.0
+            beats = (transition_duration * self.target_bpm) / 60.0
+            measures = beats / 4
+            transition_mode = f"{transition_duration}s ({measures:.1f} measures at {self.target_bpm:.1f} BPM)"
+        
         if transitions_only:
             print("Generating transitions-only preview with 5s buffers...")
         else:
             print(f"Generating mix with {len(tracks)} tracks...")
-        print(f"Transition duration: {transition_duration}s")
+        print(f"Transition length: {transition_mode}")
         print(f"Tempo strategy: {self.tempo_strategy}\n")
         
         if transitions_only:
-            return self._generate_transitions_only(tracks, output_path, transition_duration)
+            return self._generate_transitions_only(tracks, output_path, transition_duration, transition_measures)
         
         # For uniform strategy, stretch the first track to target BPM
         if self.tempo_strategy == "uniform":
@@ -242,12 +276,14 @@ class MixGenerator:
         print(f"Sample rate: {current_sr} Hz")
         print(f"File size: {os.path.getsize(output_path) / (1024*1024):.1f} MB")
     
-    def _generate_transitions_only(self, tracks: List[Track], output_path: str, transition_duration: float):
+    def _generate_transitions_only(self, tracks: List[Track], output_path: str, transition_duration: float, transition_measures: int = None):
         """
         Generate only the transition sections with 5-second buffers for preview testing
         Each transition includes 5s from end of current track + transition + 5s from start of next track
         """
         print("Creating transitions-only preview for testing...")
+        if transition_measures is not None:
+            print(f"Each transition: {transition_measures} measures ({transition_duration:.1f}s at {self.target_bpm:.1f} BPM)")
         
         current_sr = tracks[0].sr
         buffer_duration = 5.0  # 5 seconds before/after each transition

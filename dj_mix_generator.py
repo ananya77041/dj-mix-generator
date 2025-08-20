@@ -68,9 +68,14 @@ class DJMixGenerator:
         else:
             print("Note: Reordering did not improve overall compatibility\n")
     
-    def generate_mix(self, output_path: str, transition_duration: float = 30.0, transitions_only: bool = False):
+    def generate_mix(self, output_path: str, transition_duration: float = None, transition_measures: int = None, transitions_only: bool = False):
         """Generate the complete DJ mix or just transitions preview"""
-        self.mixer.generate_mix(self.tracks, output_path, transition_duration, transitions_only)
+        # Default to 8 measures if neither specified
+        if transition_duration is None and transition_measures is None:
+            transition_measures = 8
+            
+        self.mixer.generate_mix(self.tracks, output_path, transition_duration=transition_duration, 
+                               transition_measures=transition_measures, transitions_only=transitions_only)
     
     def get_cache_info(self):
         """Display information about the track analysis cache"""
@@ -109,6 +114,8 @@ def main():
         print("  --manual-downbeats     Use visual interface to manually select downbeats and BPM")
         print("  --irregular-tempo      Allow non-integer BPM values (use with --manual-downbeats)")
         print("  --tempo-strategy=MODE  Tempo alignment strategy: 'sequential' or 'uniform' (default: sequential)")
+        print("  --transition-measures=N Transition length in measures (default: 8, overrides seconds)")
+        print("  --transition-seconds=N  Transition length in seconds (default: 30, used if measures not specified)")
         print("  --no-cache             Disable track analysis caching")
         print("  --cache-info           Show cache information and exit")
         print("  --clear-cache          Clear track analysis cache and exit")
@@ -122,6 +129,8 @@ def main():
     allow_irregular_tempo = False
     use_cache = True
     tempo_strategy = "sequential"
+    transition_measures = None
+    transition_seconds = 30.0
     playlist = []
     output_path = "dj_mix.wav"
     
@@ -184,6 +193,32 @@ def main():
                 return 1
             args.remove(tempo_strategy_args[0])
         
+        # Check for transition measures
+        measures_args = [arg for arg in args if arg.startswith("--transition-measures=")]
+        if measures_args:
+            try:
+                transition_measures = int(measures_args[0].split("=", 1)[1])
+                if transition_measures < 1:
+                    print("Error: Transition measures must be at least 1.")
+                    return 1
+                args.remove(measures_args[0])
+            except ValueError:
+                print("Error: Transition measures must be a valid integer.")
+                return 1
+        
+        # Check for transition seconds (only used if measures not specified)
+        seconds_args = [arg for arg in args if arg.startswith("--transition-seconds=")]
+        if seconds_args:
+            try:
+                transition_seconds = float(seconds_args[0].split("=", 1)[1])
+                if transition_seconds < 1.0:
+                    print("Error: Transition seconds must be at least 1.0.")
+                    return 1
+                args.remove(seconds_args[0])
+            except ValueError:
+                print("Error: Transition seconds must be a valid number.")
+                return 1
+        
         # Remaining arguments are track files
         playlist = args
         
@@ -199,7 +234,13 @@ def main():
         if reorder_by_key:
             dj.reorder_by_key()
         
-        dj.generate_mix(output_path, transitions_only=transitions_only)
+        # Generate mix with measure-based or second-based transitions
+        if transition_measures is not None:
+            print(f"Using {transition_measures} measure transitions")
+            dj.generate_mix(output_path, transition_measures=transition_measures, transitions_only=transitions_only)
+        else:
+            print(f"Using {transition_seconds} second transitions")
+            dj.generate_mix(output_path, transition_duration=transition_seconds, transitions_only=transitions_only)
         
     except Exception as e:
         print(f"Error: {e}")

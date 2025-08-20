@@ -55,7 +55,7 @@ python dj_mix_generator.py track1.wav track2.wav track3.wav
 
 This will:
 1. Analyze each track for BPM and key
-2. Create seamless 30-second crossfade transitions
+2. Create seamless 8-measure crossfade transitions (default)
 3. Use sequential tempo strategy (first track's BPM)
 4. Output a file called `dj_mix.wav`
 
@@ -167,6 +167,34 @@ python dj_mix_generator.py --tempo-strategy=uniform track1.wav track2.wav track3
 - Sequential: Mix plays at 120 BPM (track1's tempo)
 - Uniform: Mix plays at 126.7 BPM (average tempo)
 
+### Measure-Based Transitions
+
+Control transition length in musical terms instead of arbitrary time durations:
+
+**Measure-Based (Recommended)**
+```bash
+python dj_mix_generator.py --transition-measures=16 track1.wav track2.wav track3.wav
+```
+
+- Transitions last exactly 16 measures of music
+- Automatically calculated duration based on BPM
+- Musically meaningful and consistent across different tempos
+- Perfect for DJ-style mixing
+
+**Time-Based (Legacy)**
+```bash 
+python dj_mix_generator.py --transition-seconds=45 track1.wav track2.wav track3.wav
+```
+
+- Transitions last exactly 45 seconds
+- Same duration regardless of BPM
+- Can result in awkward musical timing
+
+**Examples:**
+- `--transition-measures=8` (default): 8 measure transitions = 16 seconds at 120 BPM, 12 seconds at 160 BPM
+- `--transition-measures=32`: Extended 32 measure transitions = 64 seconds at 120 BPM, 48 seconds at 160 BPM
+- `--transition-seconds=30`: Always 30 seconds regardless of tempo
+
 ### Example Output
 
 ```
@@ -199,7 +227,9 @@ Reordered track order - Average compatibility: 2.0/3.0
 Improvement: +0.5 compatibility points
 
 Generating mix with 3 tracks...
-Transition duration: 30.0s
+Sequential tempo strategy: Target BPM = 128.0 (from first track)
+Transition length: 8 measures (16.0s at 128.0 BPM)
+Tempo strategy: sequential
 
 Track 1: track1.wav
 Track 2: track2.wav
@@ -337,8 +367,8 @@ python dj_mix_generator.py --transitions-only your_track1.wav your_track2.wav yo
 python dj_mix_generator.py --manual-downbeats your_track1.wav your_track2.wav your_track3.wav
 
 # Combine options
-python dj_mix_generator.py --reorder-by-key --transitions-only your_track1.wav your_track2.wav your_track3.wav
-python dj_mix_generator.py --manual-downbeats --reorder-by-key your_track1.wav your_track2.wav
+python dj_mix_generator.py --reorder-by-key --transitions-only --transition-measures=16 your_track1.wav your_track2.wav your_track3.wav
+python dj_mix_generator.py --manual-downbeats --reorder-by-key --tempo-strategy=uniform --transition-measures=12 your_track1.wav your_track2.wav
 
 # Output files: dj_mix.wav (full mix) or dj_transitions_preview.wav (transitions only)
 ```
