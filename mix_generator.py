@@ -1314,29 +1314,23 @@ class MixGenerator:
             # Update current BPM for next iteration
             current_bpm = stretched_track.bpm
             
-            # SIMPLE AND RELIABLE APPROACH: Just add transition + new track to accumulated mix
-            # Don't try to replace segments, just accumulate everything
+            # CORRECT SIMPLE STEPS:
+            # 1. Take the accumulated mix so far
+            # 2. Add the transition 
+            # 3. Add the full new track
             
-            # Remove exactly the outro portion that was used in the transition from the end
-            transition_samples = len(transition)
-            mix_before_outro = mix_audio[:-transition_samples]
-            
-            # Add the new transition and the remaining track
-            track2_remaining = track2_audio[transition_samples:]  # Skip the intro that was used in transition
-            
-            # Build the final mix: all previous + transition + remaining new track
+            # Just concatenate: existing mix + transition + full new track
             mix_audio = np.concatenate([
-                mix_before_outro,    # All previous accumulated content minus outro
-                transition,          # The enhanced transition
-                track2_remaining     # The remaining part of the new track
+                mix_audio,      # All accumulated mix so far
+                transition,     # The transition between last and new track
+                track2_audio    # The FULL new track
             ])
             
-            print(f"  Simple accumulation for Track {i+1}:")
-            print(f"    Previous mix before outro: {len(mix_before_outro)} samples")
+            print(f"  Track {i+1} accumulation:")
+            print(f"    Previous accumulated mix: {len(mix_audio) - len(transition) - len(track2_audio)} samples")
             print(f"    Transition: {len(transition)} samples")
-            print(f"    Track {i+1} remaining: {len(track2_remaining)} samples") 
-            print(f"    Total accumulated: {len(mix_audio)} samples ({len(mix_audio)/current_sr/60:.1f} min)")
-            print(f"    Expected: All previous tracks + transition{i} + track{i+1}")
+            print(f"    Full Track {i+1}: {len(track2_audio)} samples")
+            print(f"    New total: {len(mix_audio)} samples ({len(mix_audio)/current_sr/60:.1f} min)")
             
             print(f"  Mix length so far: {len(mix_audio) / current_sr / 60:.1f} minutes\n")
         
