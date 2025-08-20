@@ -75,6 +75,21 @@ class BeatgridAligner:
         self.dragging = False
         self.dragging_track = None  # Which track is being dragged: 1 or 2
         
+        # Audio playback state
+        self.is_playing = False
+        self.playback_position = 0.0  # Current playback position in seconds
+        self.playback_start_time = None
+        self.playback_line = None  # The scrolling playback indicator line
+        self.playback_thread = None
+        self.playback_audio = None
+        self.playback_sr = None
+        
+        # Beatgrid stretching state
+        self.stretching = False
+        self.stretch_anchor_measure = None
+        self.original_bpm = None
+        self.current_bpm = None
+        
         # Setup the plot
         self._setup_plot()
     
@@ -179,27 +194,30 @@ class BeatgridAligner:
         if self.current_step == 1:
             return (
                 f"STEP 1: Adjust Track 1 Beatgrid ({self.track1.filepath.name}):\\n"
-                f"• Click and drag the PURPLE downbeat line to align with the actual first downbeat\\n"
-                f"• Use the Play button to listen to this section while adjusting\\n" 
+                f"• CLICK & DRAG anywhere: Move the entire beatgrid for alignment\\n"
+                f"• CLICK ON PURPLE LINE: Stretch/contract beatgrid to adjust tempo\\n"
+                f"• PLAY BUTTON: Listen with live scrolling indicator (pause/resume)\\n" 
                 f"• Blue lines = beats, Purple line = first downbeat (most important!)\\n"
-                f"• This will set the reference point for the entire transition\\n"
-                f"• Click 'Next Step' when the purple line aligns perfectly with the first downbeat"
+                f"• Watch the BPM update live when stretching\\n"
+                f"• Click 'Next Step' when perfectly aligned"
             )
         elif self.current_step == 2:
             return (
                 f"STEP 2: Adjust Track 2 Beatgrid ({self.track2.filepath.name}):\\n"
-                f"• Click and drag the GREEN downbeat line to align with the actual first downbeat\\n"
-                f"• Use the Play button to listen to this section while adjusting\\n"
+                f"• CLICK & DRAG anywhere: Move the entire beatgrid for alignment\\n"
+                f"• CLICK ON GREEN LINE: Stretch/contract beatgrid to adjust tempo\\n"
+                f"• PLAY BUTTON: Listen with live scrolling indicator (pause/resume)\\n"
                 f"• Orange lines = beats, Green line = first downbeat (most important!)\\n" 
-                f"• This will set the reference point for Track 2's transition\\n"
-                f"• Click 'Next Step' when the green line aligns perfectly with the first downbeat"
+                f"• Watch the BPM update live when stretching\\n"
+                f"• Click 'Next Step' when perfectly aligned"
             )
         else:
             return (
                 f"STEP 3: Final Transition Alignment:\\n"
-                f"• Both tracks' downbeats are now properly aligned\\n"
+                f"• Both tracks' downbeats and tempos are now properly adjusted\\n"
                 f"• The system will create the final transition using your adjustments\\n"
                 f"• Purple line (Track 1) and Green line (Track 2) mark the transition points\\n"
+                f"• You can still fine-tune by clicking on downbeat lines to stretch\\n"
                 f"• Click 'Confirm' to create the final aligned transition"
             )
     
@@ -544,7 +562,7 @@ class BeatgridAligner:
             self.cancel_btn.on_clicked(self._cancel_alignment)
     
     def _on_press(self, event):
-        """Handle mouse press for dragging - allow clicking anywhere on the active waveform(s)"""
+        """Handle mouse press for dragging or beatgrid stretching"""
         # Check which axes are valid based on current step
         valid_axes = []
         if self.current_step in [1, 2]:
@@ -557,33 +575,58 @@ class BeatgridAligner:
         if event.inaxes not in valid_axes or event.button != 1:
             return
         
-        # Determine which track is being dragged based on current step
-        self.dragging = True
+        # Check if user clicked near a downbeat line for stretching
+        clicked_downbeat = self._find_clicked_downbeat(event.xdata, event.inaxes)
         
-        if self.current_step == 1:
-            # Step 1: Only Track 1 can be adjusted
-            self.dragging_track = 1
-        elif self.current_step == 2:
-            # Step 2: Only Track 2 can be adjusted  
-            self.dragging_track = 2
+        if clicked_downbeat is not None:
+            # Start beatgrid stretching mode
+            self.stretching = True
+            self.stretch_anchor_measure = clicked_downbeat
+            self.drag_start_x = event.xdata
+            
+            # Determine which track is being stretched
+            if self.current_step == 1:
+                self.dragging_track = 1
+                self.original_bpm = self.track1.bpm
+                self.current_bpm = self.track1.bpm
+            elif self.current_step == 2:
+                self.dragging_track = 2
+                self.original_bpm = self.track2.bpm
+                self.current_bpm = self.track2.bpm
+            else:
+                self.dragging_track = 1 if event.inaxes == self.ax_track1 else 2
+                self.original_bpm = self.track1.bpm if self.dragging_track == 1 else self.track2.bpm
+                self.current_bpm = self.original_bpm
+            
+            print(f"Started stretching Track {self.dragging_track} beatgrid from downbeat at {clicked_downbeat:.3f} measures")
+            
         else:
-            # Step 3: Determine by which axis was clicked
-            self.dragging_track = 1 if event.inaxes == self.ax_track1 else 2
-        
-        self.drag_start_x = event.xdata
-        
-        # Store the starting offset for the track being dragged
-        if self.dragging_track == 1:
-            self.drag_start_offset = self.track1_offset
-            current_offset = self.track1_offset
-        else:
-            self.drag_start_offset = self.track2_offset
-            current_offset = self.track2_offset
-        
-        print(f"Started dragging Track {self.dragging_track} at {event.xdata:.3f} measures (current offset: {current_offset:.3f}s)")
+            # Regular dragging mode
+            self.dragging = True
+            self.stretching = False
+            
+            # Determine which track is being dragged based on current step
+            if self.current_step == 1:
+                self.dragging_track = 1
+            elif self.current_step == 2:
+                self.dragging_track = 2
+            else:
+                self.dragging_track = 1 if event.inaxes == self.ax_track1 else 2
+            
+            self.drag_start_x = event.xdata
+            
+            # Store the starting offset for the track being dragged
+            if self.dragging_track == 1:
+                self.drag_start_offset = self.track1_offset
+                current_offset = self.track1_offset
+            else:
+                self.drag_start_offset = self.track2_offset
+                current_offset = self.track2_offset
+            
+            print(f"Started dragging Track {self.dragging_track} at {event.xdata:.3f} measures (current offset: {current_offset:.3f}s)")
     
     def _on_motion(self, event):
-        """Handle mouse motion for dragging"""
+        """Handle mouse motion for dragging or beatgrid stretching"""
         # Check which axes are valid based on current step
         valid_axes = []
         if self.current_step in [1, 2]:
@@ -593,42 +636,52 @@ class BeatgridAligner:
             # Dual track view - both axes are valid
             valid_axes = [self.ax_track1, self.ax_track2]
         
-        if not self.dragging or event.inaxes not in valid_axes or event.xdata is None:
+        if not (self.dragging or self.stretching) or event.inaxes not in valid_axes or event.xdata is None:
             return
         
-        # Calculate offset change based on mouse movement (in measures)
-        mouse_delta_measures = event.xdata - self.drag_start_x
-        
-        # Convert measure delta to time delta
-        avg_bpm = (self.track1.bpm + self.track2.bpm) / 2.0
-        beats_per_second = avg_bpm / 60.0
-        measures_per_second = beats_per_second / self.beats_per_measure
-        mouse_delta_time = mouse_delta_measures / measures_per_second
-        
-        new_offset = self.drag_start_offset + mouse_delta_time
-        
-        # Limit offset to reasonable range (±2 measures worth of time)
-        max_measures = 2.0
-        max_offset_time = max_measures / measures_per_second
-        new_offset = np.clip(new_offset, -max_offset_time, max_offset_time)
-        
-        # Apply offset to the track being dragged
-        if self.dragging_track == 1:
-            if abs(new_offset - self.track1_offset) > 0.001:  # Only update if significant change
-                self.track1_offset = new_offset
-                self._draw_beatgrids()
+        if self.stretching:
+            # Handle beatgrid stretching
+            self._handle_beatgrid_stretching(event.xdata)
         else:
-            if abs(new_offset - self.track2_offset) > 0.001:  # Only update if significant change
-                self.track2_offset = new_offset
-                self._draw_beatgrids()
+            # Handle regular dragging
+            # Calculate offset change based on mouse movement (in measures)
+            mouse_delta_measures = event.xdata - self.drag_start_x
+            
+            # Convert measure delta to time delta
+            avg_bpm = (self.track1.bpm + self.track2.bpm) / 2.0
+            beats_per_second = avg_bpm / 60.0
+            measures_per_second = beats_per_second / self.beats_per_measure
+            mouse_delta_time = mouse_delta_measures / measures_per_second
+            
+            new_offset = self.drag_start_offset + mouse_delta_time
+            
+            # Limit offset to reasonable range (±2 measures worth of time)
+            max_measures = 2.0
+            max_offset_time = max_measures / measures_per_second
+            new_offset = np.clip(new_offset, -max_offset_time, max_offset_time)
+            
+            # Apply offset to the track being dragged
+            if self.dragging_track == 1:
+                if abs(new_offset - self.track1_offset) > 0.001:  # Only update if significant change
+                    self.track1_offset = new_offset
+                    self._draw_beatgrids()
+            else:
+                if abs(new_offset - self.track2_offset) > 0.001:  # Only update if significant change
+                    self.track2_offset = new_offset
+                    self._draw_beatgrids()
     
     def _on_release(self, event):
-        """Handle mouse release to stop dragging"""
+        """Handle mouse release to stop dragging or stretching"""
         if self.dragging:
             final_offset = self.track1_offset if self.dragging_track == 1 else self.track2_offset
             print(f"Stopped dragging Track {self.dragging_track}. Final offset: {final_offset:.3f}s")
             self.dragging = False
-            self.dragging_track = None
+        elif self.stretching:
+            print(f"Stopped stretching Track {self.dragging_track}. Final BPM: {self.current_bpm:.1f}")
+            self.stretching = False
+            self.stretch_anchor_measure = None
+        
+        self.dragging_track = None
     
     def _auto_align(self, event):
         """Automatically find best alignment using actual detected beats"""
@@ -713,27 +766,63 @@ class BeatgridAligner:
         print("Both track alignments reset to original positions")
     
     def _play_section(self, event):
-        """Play the audio section currently displayed"""
+        """Play/pause the audio section currently displayed with live scrolling indicator"""
         try:
             import sounddevice as sd
-            import numpy as np
+            import time
+            import threading
             
+            if self.is_playing:
+                # Pause playback
+                sd.stop()
+                self.is_playing = False
+                self.play_btn.label.set_text('Play Section')
+                self.play_btn.color = 'lightgreen'
+                print("Playback paused")
+                return
+            
+            # Start/resume playback
             if self.current_step == 1:
-                audio = self.track1_outro_display
-                sr = self.track1.sr
+                self.playback_audio = self.track1_outro_display
+                self.playback_sr = self.track1.sr
                 track_name = "Track 1"
             else:
-                audio = self.track2_intro_display  
-                sr = self.track2.sr
+                self.playback_audio = self.track2_intro_display  
+                self.playback_sr = self.track2.sr
                 track_name = "Track 2"
             
-            print(f"Playing {track_name} section...")
-            sd.play(audio, sr)
+            # Start playback from current position
+            start_sample = int(self.playback_position * self.playback_sr)
+            audio_to_play = self.playback_audio[start_sample:]
+            
+            if len(audio_to_play) == 0:
+                # Reset to beginning if at end
+                self.playback_position = 0.0
+                audio_to_play = self.playback_audio
+            
+            self.is_playing = True
+            self.playback_start_time = time.time()
+            self.play_btn.label.set_text('Pause')
+            self.play_btn.color = 'yellow'
+            
+            print(f"Playing {track_name} section from {self.playback_position:.1f}s...")
+            
+            # Start audio playback
+            sd.play(audio_to_play, self.playback_sr)
+            
+            # Start scrolling indicator thread
+            self.playback_thread = threading.Thread(target=self._update_playback_indicator)
+            self.playback_thread.daemon = True
+            self.playback_thread.start()
             
         except ImportError:
             print("Audio playback not available - install sounddevice: pip install sounddevice")
         except Exception as e:
             print(f"Audio playback failed: {e}")
+            self.is_playing = False
+            if hasattr(self, 'play_btn'):
+                self.play_btn.label.set_text('Play Section')
+                self.play_btn.color = 'lightgreen'
     
     def _next_step(self, event):
         """Advance to the next step in the workflow"""
@@ -797,9 +886,178 @@ class BeatgridAligner:
     
     def _close_with_result(self, offset: float):
         """Close the GUI and return result via callback"""
+        # Stop any ongoing playback
+        if self.is_playing:
+            try:
+                import sounddevice as sd
+                sd.stop()
+            except:
+                pass
+        
         if self.callback_func:
             self.callback_func(offset)
         plt.close(self.fig)
+    
+    def _find_clicked_downbeat(self, click_x, click_axes):
+        """Find if user clicked near a downbeat line for stretching"""
+        if self.current_step == 1:
+            # Check Track 1 downbeats
+            track_window_start = (self.outro_start - len(self.track1_outro)) / self.sr + self.track1_first_downbeat_offset
+            downbeats = self._get_beats_in_window(
+                self.track1_all_downbeats,
+                track_window_start,
+                self.display_duration,
+                offset=self.track1_offset
+            )
+        elif self.current_step == 2:
+            # Check Track 2 downbeats
+            track_window_start = self.track2_start_sample / self.sr + self.track2_first_downbeat_offset
+            downbeats = self._get_beats_in_window(
+                self.track2_all_downbeats,
+                track_window_start,
+                self.display_duration,
+                offset=self.track2_offset
+            )
+        else:
+            # Step 3: Check both tracks
+            if click_axes == self.ax_track1:
+                track_window_start = (self.outro_start - len(self.track1_outro)) / self.sr + self.track1_first_downbeat_offset
+                downbeats = self._get_beats_in_window(
+                    self.track1_all_downbeats,
+                    track_window_start,
+                    self.display_duration,
+                    offset=self.track1_offset
+                )
+            else:
+                track_window_start = self.track2_start_sample / self.sr + self.track2_first_downbeat_offset
+                downbeats = self._get_beats_in_window(
+                    self.track2_all_downbeats,
+                    track_window_start,
+                    self.display_duration,
+                    offset=self.track2_offset
+                )
+        
+        # Find the closest downbeat within click tolerance
+        click_tolerance = 0.1  # 0.1 measures tolerance
+        if len(downbeats) > 0:
+            distances = np.abs(downbeats - click_x)
+            min_idx = np.argmin(distances)
+            if distances[min_idx] < click_tolerance:
+                return downbeats[min_idx]
+        
+        return None
+    
+    def _handle_beatgrid_stretching(self, current_x):
+        """Handle real-time beatgrid stretching based on mouse movement"""
+        if self.stretch_anchor_measure is None:
+            return
+        
+        # Calculate how much the user has moved the anchor downbeat
+        anchor_delta = current_x - self.stretch_anchor_measure
+        
+        # Convert anchor delta to BPM change
+        # Moving right (positive delta) = faster tempo, moving left = slower tempo
+        stretch_factor = 1 + (anchor_delta * 0.1)  # 10% BPM change per measure moved
+        
+        # Limit stretch factor to reasonable range (0.5x to 2x)
+        stretch_factor = np.clip(stretch_factor, 0.5, 2.0)
+        
+        # Calculate new BPM
+        self.current_bpm = self.original_bpm * stretch_factor
+        
+        # Update the track's effective BPM for display purposes
+        if self.dragging_track == 1:
+            self.track1.bpm = self.current_bpm
+        else:
+            self.track2.bpm = self.current_bpm
+        
+        # Redraw beatgrids with new tempo
+        self._draw_beatgrids()
+        
+        # Update title to show live BPM
+        self._update_title_with_live_bpm()
+    
+    def _update_title_with_live_bpm(self):
+        """Update the track title to show live BPM during stretching"""
+        if not self.stretching:
+            return
+        
+        if self.current_step == 1:
+            title = f'Step 1: Adjust Track 1 Beatgrid - {self.track1.filepath.name} (BPM: {self.current_bpm:.1f}) [STRETCHING]'
+            self.ax_main.set_title(title, fontsize=14, fontweight='bold', color='blue')
+        elif self.current_step == 2:
+            title = f'Step 2: Adjust Track 2 Beatgrid - {self.track2.filepath.name} (BPM: {self.current_bpm:.1f}) [STRETCHING]'
+            self.ax_main.set_title(title, fontsize=14, fontweight='bold', color='red')
+        else:
+            # Step 3: Update appropriate track title
+            if self.dragging_track == 1:
+                title = f'Step 3: Final Alignment - Track 1: {self.track1.filepath.name} (BPM: {self.current_bpm:.1f}) [STRETCHING]'
+                self.ax_track1.set_title(title, fontsize=12, fontweight='bold', color='blue')
+            else:
+                title = f'Track 2: {self.track2.filepath.name} (BPM: {self.current_bpm:.1f}) [STRETCHING]'
+                if hasattr(self, 'ax_track2') and self.ax_track2 is not None:
+                    self.ax_track2.set_title(title, fontsize=12, fontweight='bold', color='red')
+        
+        self.fig.canvas.draw_idle()
+    
+    def _update_playback_indicator(self):
+        """Update the live playback position indicator"""
+        import time
+        
+        while self.is_playing:
+            try:
+                # Calculate current playback position
+                current_time = time.time()
+                elapsed_time = current_time - self.playback_start_time
+                self.playback_position += elapsed_time / 10  # Update 10x per second
+                self.playback_start_time = current_time
+                
+                # Check if playback finished
+                max_duration = len(self.playback_audio) / self.playback_sr
+                if self.playback_position >= max_duration:
+                    self.is_playing = False
+                    self.playback_position = 0.0
+                    self.play_btn.label.set_text('Play Section')
+                    self.play_btn.color = 'lightgreen'
+                    if self.playback_line:
+                        self.playback_line.remove()
+                        self.playback_line = None
+                    self.fig.canvas.draw_idle()
+                    break
+                
+                # Convert playback position to measures
+                avg_bpm = self.current_bpm if self.stretching else (
+                    self.track1.bpm if self.current_step == 1 else self.track2.bpm
+                )
+                beats_per_second = avg_bpm / 60.0
+                measures_per_second = beats_per_second / self.beats_per_measure
+                playback_measure = self.playback_position * measures_per_second
+                
+                # Update playback indicator line
+                if 0 <= playback_measure <= self.measures_to_show:
+                    # Remove old line
+                    if self.playback_line:
+                        self.playback_line.remove()
+                    
+                    # Add new line
+                    axes_to_draw = [self.ax_main] if self.current_step in [1, 2] else [self.ax_track1, self.ax_track2]
+                    for ax in axes_to_draw:
+                        if ax is not None:
+                            self.playback_line = ax.axvline(x=playback_measure, color='red', alpha=0.8, 
+                                                          linestyle='-', linewidth=2.0, zorder=100)
+                    
+                    self.fig.canvas.draw_idle()
+                
+                time.sleep(0.1)  # 10 FPS update rate
+                
+            except Exception as e:
+                print(f"Playback indicator update failed: {e}")
+                break
+        
+        # Clean up when playback stops
+        if self.playback_line:
+            self.playback_line.remove()
+            self.playback_line = None
     
     def show(self, callback_func: Optional[Callable] = None) -> Optional[float]:
         """
