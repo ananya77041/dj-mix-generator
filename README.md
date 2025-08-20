@@ -1,15 +1,17 @@
 # DJ Mix Generator
 
-A simple Python tool to create continuous DJ mixes from WAV files. The program analyzes your tracks for BPM and key information, then creates seamless transitions between them.
+A modular Python tool to create continuous DJ mixes from WAV files. The program analyzes your tracks for BPM and key information, then creates seamless transitions between them.
 
 ## Features
 
 - **Automatic BPM detection** using librosa's beat tracking
 - **Musical key estimation** with chromagram analysis
 - **Beat matching** via time-stretching to align tempos
-- **Smooth crossfade transitions** with equal-power curves
+- **Smooth crossfade transitions** with equal-power curves (30 seconds default)
+- **Harmonic mixing** with optional key-based track reordering
 - **Audio normalization** to prevent clipping
 - **Support for different sample rates** with automatic resampling
+- **Modular architecture** for easy customization and extension
 
 ## Installation
 
@@ -33,8 +35,26 @@ python dj_mix_generator.py track1.wav track2.wav track3.wav
 
 This will:
 1. Analyze each track for BPM and key
-2. Create seamless 8-second crossfade transitions
+2. Create seamless 30-second crossfade transitions
 3. Output a file called `dj_mix.wav`
+
+### Harmonic Mixing (Key-Based Reordering)
+
+```bash
+python dj_mix_generator.py --reorder-by-key track1.wav track2.wav track3.wav
+```
+
+This will:
+1. Analyze each track for BPM and key
+2. **Reorder tracks for optimal harmonic compatibility**
+3. Create seamless transitions with better key matching
+4. Output a file called `dj_mix.wav`
+
+The key matching uses Circle of Fifths relationships:
+- **Perfect matches**: Same key or relative major/minor
+- **Compatible**: Adjacent keys in Circle of Fifths
+- **Semitone**: Keys one semitone apart (energy boost)
+- **Clashes**: Avoid awkward key combinations
 
 ### Example Output
 
@@ -52,8 +72,16 @@ Analyzing: track3.wav
 
 Successfully loaded 3 tracks.
 
+Original track order - Average compatibility: 1.5/3.0
+Reordering tracks for optimal key matching...
+Starting with: track1.wav (G major)
+  Next: track3.wav (D major) - compatible match  
+  Next: track2.wav (A minor) - compatible match
+Reordered track order - Average compatibility: 2.0/3.0
+Improvement: +0.5 compatibility points
+
 Generating mix with 3 tracks...
-Transition duration: 8.0s
+Transition duration: 30.0s
 
 Track 1: track1.wav
 Track 2: track2.wav
@@ -87,7 +115,7 @@ File size: 82.3 MB
 
 3. **Crossfading**: Creates smooth transitions using:
    - Equal-power crossfade curves (cosine/sine)
-   - 8-second default transition duration
+   - 30-second default transition duration
    - Aligned beat positions for seamless mixing
 
 4. **Audio Processing**: 
@@ -105,15 +133,28 @@ This is a basic implementation with some limitations:
 - **Beat alignment**: Basic tempo matching without precise beat alignment
 - **WAV only**: Currently only supports WAV files
 
+## Project Structure
+
+The project is organized into modular components:
+
+- `models.py` - Track dataclass definition
+- `audio_analyzer.py` - AudioAnalyzer class for BPM and key detection
+- `mix_generator.py` - MixGenerator class for transitions and mixing
+- `key_matcher.py` - KeyMatcher class for harmonic mixing and track reordering
+- `dj_mix_generator.py` - Main DJMixGenerator class and CLI interface
+- `requirements.txt` - Python dependencies
+- `README.md` - This documentation
+
 ## Next Steps for Enhancement
 
 - Better key detection algorithms (Krumhansl-Schmuckler, etc.)
-- Harmonic mixing with compatible key transitions
+- Advanced harmonic mixing algorithms (considering energy levels, mood)
 - Automatic cue point detection for optimal transition timing
 - EQ matching between tracks
 - Support for MP3 and other audio formats
 - GUI interface for easier use
 - Advanced time-stretching with pyrubberband
+- Machine learning for better track ordering based on user preferences
 
 ## Troubleshooting
 
@@ -138,8 +179,11 @@ This is a basic implementation with some limitations:
 To test with your own tracks:
 
 ```bash
-# Put your WAV files in the project directory
+# Basic mixing (preserves original order)
 python dj_mix_generator.py your_track1.wav your_track2.wav your_track3.wav
+
+# Harmonic mixing (reorders for better key compatibility)
+python dj_mix_generator.py --reorder-by-key your_track1.wav your_track2.wav your_track3.wav
 
 # The output will be saved as dj_mix.wav
 ```
