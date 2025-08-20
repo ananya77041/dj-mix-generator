@@ -50,6 +50,12 @@ class BeatgridAligner:
         self.track1_beats_in_transition = self._get_beats_in_transition(track1, outro_start, display_samples)
         self.track2_beats_in_transition = self._get_beats_in_transition(track2, track2_start_sample, display_samples)
         
+        # Store original beat data for precise alignment
+        self.track1_all_beats = self._get_all_beats_as_time(track1)
+        self.track2_all_beats = self._get_all_beats_as_time(track2)
+        self.track1_all_downbeats = self._get_all_downbeats_as_time(track1) 
+        self.track2_all_downbeats = self._get_all_downbeats_as_time(track2)
+        
         # Track2 alignment offset (user adjustable)
         self.track2_offset = 0.0  # seconds
         self.callback_func = None
@@ -94,6 +100,37 @@ class BeatgridAligner:
         else:
             return np.array([])
     
+    def _get_all_beats_as_time(self, track: Track) -> np.ndarray:
+        """Get all beats in the track as time values (seconds)"""
+        if len(track.beats) == 0:
+            return np.array([])
+        beat_samples = librosa.frames_to_samples(track.beats, hop_length=512)
+        return beat_samples / self.sr
+    
+    def _get_all_downbeats_as_time(self, track: Track) -> np.ndarray:
+        """Get all downbeats in the track as time values (seconds)"""
+        if len(track.downbeats) == 0:
+            return np.array([])
+        downbeat_samples = librosa.frames_to_samples(track.downbeats, hop_length=512)
+        return downbeat_samples / self.sr
+    
+    def _get_beats_in_window(self, all_beats: np.ndarray, window_start: float, window_duration: float, offset: float = 0.0) -> np.ndarray:
+        """Get beats within a specific time window, with optional offset"""
+        if len(all_beats) == 0:
+            return np.array([])
+        
+        # Apply offset to beat positions
+        offset_beats = all_beats + offset
+        
+        # Find beats within the window
+        window_end = window_start + window_duration
+        beats_in_window = offset_beats[
+            (offset_beats >= window_start) & (offset_beats <= window_end)
+        ]
+        
+        # Convert to relative time within the window
+        return beats_in_window - window_start
+    
     def _setup_plot(self):
         """Setup the matplotlib plot with stacked waveforms and spanning beatgrids"""
         # Create figure with subplots: track1, track2, controls
@@ -137,6 +174,7 @@ class BeatgridAligner:
         instruction_text = (
             f"Beatgrid Alignment - First 4 Measures of Transition (Stacked View):\\n"
             f"• {tempo_note}\\n"
+            f"• Uses ACTUAL DETECTED BEATS (no drift) from audio analysis\\n"
             f"• Top: Track 1 (reference) | Bottom: Track 2 (adjustable)\\n"
             f"• Solid lines: Track 1 (blue=beats, purple=downbeats) | Dashed lines: Track 2 (orange=beats, green=downbeats)\\n"
             f"• Click ANYWHERE on either waveform and drag left/right to align Track 2\\n"
@@ -162,7 +200,7 @@ class BeatgridAligner:
         self.fig.canvas.manager.set_window_title('Beatgrid Alignment Tool - Stacked View')
     
     def _draw_beatgrids(self):
-        """Draw the beatgrid lines spanning across both tracks"""
+        """Draw the beatgrid lines spanning across both tracks using actual detected beats"""
         # Clear existing beatgrid lines from both axes
         for ax in [self.ax_track1, self.ax_track2]:
             # Remove beat lines (keep only the waveform plot)
@@ -172,35 +210,59 @@ class BeatgridAligner:
             for line in lines_to_remove:
                 line.remove()
         
-        # Get downbeats for both tracks
-        track1_downbeats = self._get_downbeats_in_transition(self.track1, self.outro_start, len(self.track1_outro))
-        track2_downbeats = self._get_downbeats_in_transition(self.track2, self.track2_start_sample, len(self.track2_intro))
+        # Calculate window parameters for the displayed segment
+        track1_window_start = (self.outro_start - len(self.track1_outro)) / self.sr
+        track2_window_start = self.track2_start_sample / self.sr
         
-        # Apply offset to track2 positions
-        track2_beats_offset = self.track2_beats_in_transition + self.track2_offset
-        track2_downbeats_offset = track2_downbeats + self.track2_offset
+        # Get actual detected beats within the display window
+        track1_beats_in_display = self._get_beats_in_window(
+            self.track1_all_beats, 
+            track1_window_start, 
+            self.display_duration
+        )
+        
+        track1_downbeats_in_display = self._get_beats_in_window(
+            self.track1_all_downbeats,
+            track1_window_start,
+            self.display_duration
+        )
+        
+        # Get track2 beats with user offset applied
+        track2_beats_in_display = self._get_beats_in_window(
+            self.track2_all_beats,
+            track2_window_start,
+            self.display_duration,
+            offset=self.track2_offset
+        )
+        
+        track2_downbeats_in_display = self._get_beats_in_window(
+            self.track2_all_downbeats,
+            track2_window_start, 
+            self.display_duration,
+            offset=self.track2_offset
+        )
         
         # Draw Track 1 beatgrid (reference beats - blue lines spanning both plots)
-        for beat_time in self.track1_beats_in_transition:
+        for beat_time in track1_beats_in_display:
             if 0 <= beat_time <= self.display_duration:
                 # Draw on both subplots to create spanning effect
                 self.ax_track1.axvline(x=beat_time, color='blue', alpha=0.6, linestyle='-', linewidth=1.5)
                 self.ax_track2.axvline(x=beat_time, color='blue', alpha=0.6, linestyle='-', linewidth=1.5)
         
-        # Draw Track 1 downbeats (reference downbeats - purple lines spanning both plots)
-        for downbeat_time in track1_downbeats:
+        # Draw Track 1 downbeats (reference downbeats - purple lines spanning both plots)  
+        for downbeat_time in track1_downbeats_in_display:
             if 0 <= downbeat_time <= self.display_duration:
                 self.ax_track1.axvline(x=downbeat_time, color='purple', alpha=0.8, linestyle='-', linewidth=2.5)
                 self.ax_track2.axvline(x=downbeat_time, color='purple', alpha=0.8, linestyle='-', linewidth=2.5)
         
         # Draw Track 2 beatgrid (adjustable beats - orange lines spanning both plots)
-        for beat_time in track2_beats_offset:
+        for beat_time in track2_beats_in_display:
             if 0 <= beat_time <= self.display_duration:
                 self.ax_track1.axvline(x=beat_time, color='orange', alpha=0.6, linestyle='--', linewidth=1.5)
                 self.ax_track2.axvline(x=beat_time, color='orange', alpha=0.6, linestyle='--', linewidth=1.5)
         
         # Draw Track 2 downbeats (adjustable downbeats - green lines spanning both plots)
-        for downbeat_time in track2_downbeats_offset:
+        for downbeat_time in track2_downbeats_in_display:
             if 0 <= downbeat_time <= self.display_duration:
                 self.ax_track1.axvline(x=downbeat_time, color='green', alpha=0.8, linestyle='--', linewidth=2.5)
                 self.ax_track2.axvline(x=downbeat_time, color='green', alpha=0.8, linestyle='--', linewidth=2.5)
@@ -212,22 +274,37 @@ class BeatgridAligner:
         self.fig.canvas.draw()
     
     def _update_alignment_quality(self):
-        """Calculate and display alignment quality"""
-        if len(self.track1_beats_in_transition) == 0 or len(self.track2_beats_in_transition) == 0:
-            return
+        """Calculate and display alignment quality using actual detected beats"""
+        # Calculate window parameters for the displayed segment
+        track1_window_start = (self.outro_start - len(self.track1_outro)) / self.sr
+        track2_window_start = self.track2_start_sample / self.sr
         
-        # Apply offset to track2 beats
-        track2_beats_offset = self.track2_beats_in_transition + self.track2_offset
+        # Get actual detected beats within the display window
+        track1_beats_in_display = self._get_beats_in_window(
+            self.track1_all_beats, 
+            track1_window_start, 
+            self.display_duration
+        )
+        
+        track2_beats_in_display = self._get_beats_in_window(
+            self.track2_all_beats,
+            track2_window_start,
+            self.display_duration,
+            offset=self.track2_offset
+        )
+        
+        if len(track1_beats_in_display) == 0 or len(track2_beats_in_display) == 0:
+            return
         
         # Calculate average alignment offset
         total_offset = 0
         matches = 0
         
-        for t1_beat in self.track1_beats_in_transition:
+        for t1_beat in track1_beats_in_display:
             if 0 <= t1_beat <= self.display_duration:
                 # Find closest t2 beat
-                valid_t2_beats = track2_beats_offset[
-                    (track2_beats_offset >= 0) & (track2_beats_offset <= self.display_duration)
+                valid_t2_beats = track2_beats_in_display[
+                    (track2_beats_in_display >= 0) & (track2_beats_in_display <= self.display_duration)
                 ]
                 if len(valid_t2_beats) > 0:
                     distances = np.abs(valid_t2_beats - t1_beat)
@@ -310,11 +387,22 @@ class BeatgridAligner:
             print(f"Stopped dragging. Final offset: {self.track2_offset:.3f}s")
     
     def _auto_align(self, event):
-        """Automatically find best alignment"""
+        """Automatically find best alignment using actual detected beats"""
         print("Auto-aligning beats...")
         
-        if len(self.track1_beats_in_transition) == 0 or len(self.track2_beats_in_transition) == 0:
-            print("Not enough beats for auto-alignment")
+        # Calculate window parameters
+        track1_window_start = (self.outro_start - len(self.track1_outro)) / self.sr
+        track2_window_start = self.track2_start_sample / self.sr
+        
+        # Get reference beats for track1
+        track1_beats_in_display = self._get_beats_in_window(
+            self.track1_all_beats, 
+            track1_window_start, 
+            self.display_duration
+        )
+        
+        if len(track1_beats_in_display) == 0:
+            print("Not enough track1 beats for auto-alignment")
             return
         
         # Try different offsets and find the one with minimum total distance
@@ -324,13 +412,22 @@ class BeatgridAligner:
         # Search in small increments
         search_range = min(1.0, self.display_duration * 0.25)  # Search within reasonable range
         for offset in np.arange(-search_range, search_range, 0.005):  # 5ms increments
-            track2_beats_test = self.track2_beats_in_transition + offset
+            # Get track2 beats with this test offset
+            track2_beats_test = self._get_beats_in_window(
+                self.track2_all_beats,
+                track2_window_start,
+                self.display_duration,
+                offset=offset
+            )
+            
+            if len(track2_beats_test) == 0:
+                continue
             
             # Calculate alignment score
             total_distance = 0
             matches = 0
             
-            for t1_beat in self.track1_beats_in_transition:
+            for t1_beat in track1_beats_in_display:
                 if 0 <= t1_beat <= self.display_duration:
                     valid_t2_beats = track2_beats_test[
                         (track2_beats_test >= 0) & (track2_beats_test <= self.display_duration)
