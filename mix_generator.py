@@ -1298,15 +1298,16 @@ class MixGenerator:
                                                      target_sr=current_sr)
                 current_track.sr = current_sr
             
-            # Create a temporary track object for the current mix state
+            # Create a track object representing the current accumulated mix
+            # This is crucial for multi-track mixes - prev_track represents the ENTIRE accumulated mix so far
             prev_track = Track(
-                filepath=tracks[i-1].filepath,
-                audio=mix_audio,
+                filepath=tracks[i-1].filepath,  # Just for reference
+                audio=mix_audio,  # The ENTIRE accumulated mix
                 sr=current_sr,
-                bpm=current_bpm,  # Use current mix BPM
-                key=tracks[i-1].key,
-                beats=tracks[i-1].beats,
-                downbeats=tracks[i-1].downbeats,
+                bpm=current_bpm,  # Current mix BPM
+                key=tracks[i-1].key,  # Just for reference
+                beats=tracks[i-1].beats,  # This needs to be reconstructed but we'll use original for now
+                downbeats=tracks[i-1].downbeats,  # This needs to be reconstructed but we'll use original for now
                 duration=len(mix_audio) / current_sr
             )
             
@@ -1345,21 +1346,24 @@ class MixGenerator:
             # Part 2: The enhanced transition (replaces the outro segment)
             enhanced_transition = transition
             
-            # Part 3: Track2 audio after the intro segment
-            track2_after_intro = track2_audio[intro_end_in_track2:]
+            # Part 3: The full remaining track2 audio (from where intro processing ended)
+            track2_remaining = track2_audio[intro_end_in_track2:]
             
-            # Combine all parts with no sample loss
-            mix_audio = np.concatenate([
-                mix_before_outro,
-                enhanced_transition,
-                track2_after_intro
+            # Combine all parts - this accumulates all previous tracks + new transition + new track
+            new_mix_audio = np.concatenate([
+                mix_before_outro,     # All previous tracks up to outro
+                enhanced_transition,  # Enhanced crossfade
+                track2_remaining     # Full remaining track2
             ])
             
-            print(f"  Perfect sample continuity:")
-            print(f"    Mix before outro ({outro_start_in_mix} samples): {len(mix_before_outro)} samples")
+            # Update mix_audio with the new accumulated mix
+            mix_audio = new_mix_audio
+            
+            print(f"  Perfect sample continuity - Track {i+1} accumulation:")
+            print(f"    Previous mix before outro: {len(mix_before_outro)} samples")
             print(f"    Enhanced transition: {len(enhanced_transition)} samples")
-            print(f"    Track2 remaining (from sample {intro_end_in_track2}): {len(track2_after_intro)} samples")
-            print(f"    Total mix: {len(mix_audio)} samples")
+            print(f"    Track{i+1} remaining (from sample {intro_end_in_track2}): {len(track2_remaining)} samples")
+            print(f"    New total mix: {len(mix_audio)} samples")
             
             print(f"  Mix length so far: {len(mix_audio) / current_sr / 60:.1f} minutes\n")
         
