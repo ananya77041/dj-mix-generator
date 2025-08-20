@@ -1320,10 +1320,7 @@ class MixGenerator:
             current_bpm = stretched_track.bpm
             
             # SIMPLE OVERLAY APPROACH - Natural DJ mixing:
-            # Find optimal downbeat alignment points
-            track1_end_sample, track2_start_sample = self.beat_aligner.find_optimal_transition_points(
-                actual_prev_track, stretched_track, transition_duration
-            )
+            # Start track2 from the beginning and overlay it with the end of the current mix
             
             # Calculate transition length in samples
             transition_samples = int(transition_duration * actual_prev_track.sr)
@@ -1339,8 +1336,10 @@ class MixGenerator:
             mix_before_transition = mix_audio[:transition_start_in_mix]
             track1_overlap = mix_audio[transition_start_in_mix:]  # The overlapping part from current mix
             
-            # Get the overlapping part from track2 (from its aligned start position)
-            track2_overlap = stretched_track.audio[track2_start_sample:track2_start_sample + len(track1_overlap)]
+            # CRITICAL FIX: Start track2 from the beginning (or early), not from beat aligner position
+            # This ensures we get the full track2 body, not just the end portion
+            track2_start_in_track = 0  # Start from beginning of track2
+            track2_overlap = stretched_track.audio[track2_start_in_track:track2_start_in_track + len(track1_overlap)]
             
             # Ensure both overlaps are the same length
             min_overlap_length = min(len(track1_overlap), len(track2_overlap))
@@ -1360,9 +1359,9 @@ class MixGenerator:
                 crossfaded_overlap = track1_overlap * fade_out + track2_overlap * fade_in
                 
                 # CRITICAL FIX: Get ALL of track2 after the crossfade region
-                # The crossfade uses track2_start_sample as the start point and min_overlap_length as duration
-                # So the remainder starts at track2_start_sample + min_overlap_length
-                crossfade_end_in_track2 = track2_start_sample + min_overlap_length
+                # The crossfade uses track2_start_in_track as the start point and min_overlap_length as duration
+                # So the remainder starts at track2_start_in_track + min_overlap_length
+                crossfade_end_in_track2 = track2_start_in_track + min_overlap_length
                 
                 if crossfade_end_in_track2 < len(stretched_track.audio):
                     track2_remainder = stretched_track.audio[crossfade_end_in_track2:]
@@ -1370,7 +1369,7 @@ class MixGenerator:
                     # CRITICAL BUG: Beat aligner chose a start position too late in the track
                     print(f"  WARNING: Track {i+1} entirely consumed in crossfade - beat aligner bug!")
                     print(f"    Track length: {len(stretched_track.audio)} samples ({len(stretched_track.audio)/current_sr:.1f}s)")
-                    print(f"    Crossfade start: {track2_start_sample}, length: {min_overlap_length}")  
+                    print(f"    Crossfade start: {track2_start_in_track}, length: {min_overlap_length}")  
                     print(f"    Crossfade end: {crossfade_end_in_track2}")
                     print(f"    FIXING: Using simple start position instead of beat aligner")
                     
@@ -1400,7 +1399,7 @@ class MixGenerator:
                 print(f"    Track2 remainder: {len(track2_remainder)} samples")
                 print(f"    Final mix: {len(mix_audio)} samples ({len(mix_audio)/current_sr/60:.1f} min)")
                 print(f"    Structure: {len(mix_before_transition)} + {min_overlap_length} + {len(track2_remainder)} = {len(mix_audio)}")
-                print(f"    Downbeat alignment: track1[{track1_end_sample}] ↔ track2[{track2_start_sample}]")
+                print(f"    Natural overlay: track2 starts from beginning, overlays with end of mix")
             
             print(f"  Mix length so far: {len(mix_audio) / current_sr / 60:.1f} minutes\n")
         
