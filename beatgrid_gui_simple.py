@@ -84,6 +84,7 @@ class SimpleBeatgridAligner:
         self.stretch_anchor_measure = None
         self.original_bpm = None
         self.selected_downbeat_index = None
+        self.selected_downbeat_position = None
         self.mouse_down_position = None
         
         # Calculated beat positions
@@ -286,7 +287,7 @@ class SimpleBeatgridAligner:
             
             # Register plot mouse click handler
             with dpg.handler_registry():
-                dpg.add_mouse_click_handler(callback=self._on_plot_click)
+                dpg.add_mouse_click_handler(callback=self._on_plot_click, tag="plot_click_handler")
         
         except Exception as e:
             print(f"Error creating plot: {e}")
@@ -416,7 +417,17 @@ class SimpleBeatgridAligner:
             # Update info display
             current_offset = self.track1_offset if self.current_step == 1 else self.track2_offset
             dpg.set_value("info", f"BPM: {value:.1f} | Offset: {current_offset:.3f}s | Quality: Adjusting...")
-            dpg.set_value("status", f"BPM adjusted to {value:.1f}")
+            # If a downbeat is selected, calculate stretch factor
+            if self.stretching and hasattr(self, 'selected_downbeat_index') and self.selected_downbeat_index is not None:
+                stretch_factor = value / self.original_bpm
+                dpg.set_value("status", 
+                             f"BPM: {value:.1f} | Stretching downbeat {self.selected_downbeat_index + 1} by {stretch_factor:.2f}x")
+                
+                # Apply beatgrid stretching around the selected downbeat
+                self._apply_downbeat_stretch(stretch_factor)
+            else:
+                # Normal BPM adjustment
+                dpg.set_value("status", f"BPM adjusted to {value:.1f}")
             
             # Update beatgrid display
             self._refresh_beatgrid_lines()
@@ -427,6 +438,9 @@ class SimpleBeatgridAligner:
     def _next_step(self):
         """Move to next step"""
         try:
+            # Clear any downbeat selection before moving to next step
+            self._clear_downbeat_selection()
+            
             if self.current_step == 1:
                 self.current_step = 2
                 dpg.set_value("step_text", "STEP 2: Adjust Track 2 Beatgrid")
@@ -535,15 +549,136 @@ class SimpleBeatgridAligner:
                 callback_func(0.0)
     
     def _on_plot_click(self, sender, app_data):
-        """Handle mouse clicks on waveform plot"""
+        """Handle mouse clicks on waveform plot for downbeat interaction"""
         try:
-            # Simple click handler - just provide feedback
-            dpg.set_value("status", "Plot clicked - use BPM slider for tempo adjustment")
+            # Get mouse position when clicking on the plot
+            if dpg.does_item_exist("waveform_plot"):
+                # Get plot mouse position
+                plot_mouse_pos = dpg.get_plot_mouse_pos()
+                if plot_mouse_pos and len(plot_mouse_pos) >= 2:
+                    mouse_x = plot_mouse_pos[0]  # Position in measures
+                    mouse_y = plot_mouse_pos[1]  # Amplitude (not needed)
+                    
+                    # Check if click is near a downbeat line
+                    current_downbeats = self.track1_downbeat_positions if self.current_step == 1 else self.track2_downbeat_positions
+                    
+                    # Find nearest downbeat within click tolerance
+                    click_tolerance = 0.15  # 0.15 measures tolerance
+                    nearest_downbeat = None
+                    nearest_distance = float('inf')
+                    nearest_index = -1
+                    
+                    for i, downbeat_pos in enumerate(current_downbeats):
+                        distance = abs(mouse_x - downbeat_pos)
+                        if distance <= click_tolerance and distance < nearest_distance:
+                            nearest_distance = distance
+                            nearest_downbeat = downbeat_pos
+                            nearest_index = i
+                    
+                    if nearest_downbeat is not None:
+                        # Downbeat clicked - enable stretching mode
+                        self.selected_downbeat_index = nearest_index
+                        self.selected_downbeat_position = nearest_downbeat
+                        self.stretching = True
+                        self.original_bpm = self.track1.bpm if self.current_step == 1 else self.track2.bpm
+                        
+                        dpg.set_value("status", f"Selected downbeat {nearest_index + 1} at {nearest_downbeat:.2f} measures - use BPM slider to stretch")
+                        
+                        # Highlight the selected downbeat (optional visual feedback)
+                        self._highlight_selected_downbeat(nearest_index)
+                    else:
+                        # Clicked elsewhere - add new downbeat
+                        if 0 <= mouse_x <= self.measures_to_show:
+                            self._add_downbeat_at_position(mouse_x)
+                        else:
+                            dpg.set_value("status", f"Clicked at {mouse_x:.2f} measures - outside valid range")
+                else:
+                    dpg.set_value("status", "Plot clicked - mouse position unavailable")
+            else:
+                dpg.set_value("status", "Plot clicked - plot not found")
                 
         except Exception as e:
             print(f"Plot click error: {e}")
+            dpg.set_value("status", f"Click error: {e}")
     
+    def _highlight_selected_downbeat(self, downbeat_index):
+        """Highlight the selected downbeat for visual feedback"""
+        try:
+            # Change the color of the selected downbeat line to indicate selection
+            downbeat_tag = f"downbeat_line_{downbeat_index}"
+            if dpg.does_item_exist(downbeat_tag):
+                # Create highlighted theme (brighter purple)
+                highlighted_theme = self._create_line_theme((255, 150, 255, 255), 3.0)
+                dpg.bind_item_theme(downbeat_tag, highlighted_theme)
+                
+                # Reset other downbeat lines to normal color
+                current_downbeats = self.track1_downbeat_positions if self.current_step == 1 else self.track2_downbeat_positions
+                for i in range(len(current_downbeats)):
+                    if i != downbeat_index:
+                        other_tag = f"downbeat_line_{i}"
+                        if dpg.does_item_exist(other_tag):
+                            normal_theme = self._create_line_theme((200, 100, 255, 180), 2.5)
+                            dpg.bind_item_theme(other_tag, normal_theme)
+                            
+        except Exception as e:
+            print(f"Highlight downbeat error: {e}")
     
+    def _add_downbeat_at_position(self, position):
+        """Add a new downbeat at the specified position"""
+        try:
+            if self.current_step == 1:
+                downbeats = list(self.track1_downbeat_positions)
+                downbeats.append(position)
+                downbeats.sort()
+                self.track1_downbeat_positions = np.array(downbeats)
+            else:
+                downbeats = list(self.track2_downbeat_positions)
+                downbeats.append(position)
+                downbeats.sort()
+                self.track2_downbeat_positions = np.array(downbeats)
+            
+            dpg.set_value("status", f"Added downbeat at {position:.2f} measures - recreate plot to see changes")
+            
+        except Exception as e:
+            print(f"Add downbeat error: {e}")
+    
+    def _apply_downbeat_stretch(self, stretch_factor):
+        """Apply beatgrid stretching around the selected downbeat"""
+        try:
+            # For now, this is a placeholder for the stretching algorithm
+            # In a full implementation, this would:
+            # 1. Keep the selected downbeat at its original position
+            # 2. Stretch/compress all other beats relative to this anchor point
+            # 3. Recalculate beat positions based on the new tempo
+            
+            # Simple implementation - just update the BPM adjustment
+            # The actual stretching will be handled by the main mix generation process
+            if self.current_step == 1:
+                self.track1_bpm_adjustment = stretch_factor
+            else:
+                self.track2_bpm_adjustment = stretch_factor
+                
+        except Exception as e:
+            print(f"Apply downbeat stretch error: {e}")
+    
+    def _clear_downbeat_selection(self):
+        """Clear the current downbeat selection"""
+        try:
+            if hasattr(self, 'selected_downbeat_index') and self.selected_downbeat_index is not None:
+                # Reset the selected downbeat color to normal
+                downbeat_tag = f"downbeat_line_{self.selected_downbeat_index}"
+                if dpg.does_item_exist(downbeat_tag):
+                    normal_theme = self._create_line_theme((200, 100, 255, 180), 2.5)
+                    dpg.bind_item_theme(downbeat_tag, normal_theme)
+            
+            # Clear selection state
+            self.selected_downbeat_index = None
+            self.selected_downbeat_position = None
+            self.stretching = False
+            self.original_bpm = None
+            
+        except Exception as e:
+            print(f"Clear downbeat selection error: {e}")
     
     def _refresh_beatgrid_lines(self):
         """Refresh beatgrid overlay lines with current BPM adjustments"""
