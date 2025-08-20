@@ -1314,55 +1314,64 @@ class MixGenerator:
             # Update current BPM for next iteration
             current_bpm = stretched_track.bpm
             
-            # EXACT STEP-BY-STEP PROCESS WITH PERFECT SAMPLE CONTINUITY:
-            # 1. Calculate and store length of first track (current accumulated mix)
-            first_track_length = len(mix_audio)
-            
-            # 2. Calculate and store length of transition
-            transition_length = len(transition)
-            
-            # 3. Calculate and store length of second track
-            second_track_length = len(track2_audio)
-            
-            # Get the actual transition boundaries used by the beat aligner to extract exact segments
+            # SIMPLE OVERLAY APPROACH - Natural DJ mixing:
+            # Find optimal downbeat alignment points
             track1_end_sample, track2_start_sample = self.beat_aligner.find_optimal_transition_points(
                 actual_prev_track, stretched_track, transition_duration
             )
             
-            # Calculate actual outro and intro lengths used in the transition
-            outro_length = track1_end_sample - max(0, track1_end_sample - transition_length)
-            intro_length = min(transition_length, track2_start_sample + transition_length) - track2_start_sample
+            # Calculate transition length in samples
+            transition_samples = int(transition_duration * actual_prev_track.sr)
             
-            # 4. Remove length of transition from end of first track and store snippet
-            # The primeiro track snippet ends exactly where the transition's outro segment begins
-            outro_start_in_mix = first_track_length - outro_length
-            outro_start_in_mix = max(0, outro_start_in_mix)
-            first_track_snippet = mix_audio[:outro_start_in_mix]
+            # Simple approach: Start the transition where track1 would naturally end minus transition length
+            # This way we overlay the last part of track1 with the beginning of track2
+            mix_length_before_track1_end = len(mix_audio)
             
-            # 5. Remove length of transition from beginning of second track and store snippet  
-            # The second track snippet starts exactly where the transition's intro segment ends
-            intro_end_in_track2 = track2_start_sample + intro_length
-            second_track_snippet = track2_audio[intro_end_in_track2:]
+            # The transition starts at the end of the current mix minus the transition duration
+            transition_start_in_mix = max(0, mix_length_before_track1_end - transition_samples)
             
-            # 6. Concatenate snippet of first track, transition, and snippet of second track
-            # CRITICAL: The transition audio must pick up exactly where the first track snippet ends
-            # and the second track snippet must start exactly where the transition ends
-            mix_audio = np.concatenate([
-                first_track_snippet,  # Track 1 body (up to outro start)
-                transition,           # Crossfaded outro + intro (perfect continuity)
-                second_track_snippet  # Track 2 body (from intro end onwards)
-            ])
+            # Split the current mix at the transition point
+            mix_before_transition = mix_audio[:transition_start_in_mix]
+            track1_overlap = mix_audio[transition_start_in_mix:]  # The overlapping part from current mix
             
-            print(f"  Track {i+1} mixing with perfect sample continuity:")
-            print(f"    1. First track length: {first_track_length} samples ({first_track_length/current_sr:.1f}s)")
-            print(f"    2. Transition length: {transition_length} samples ({transition_length/current_sr:.1f}s)")
-            print(f"    3. Second track length: {second_track_length} samples ({second_track_length/current_sr:.1f}s)")
-            print(f"    4. First track snippet (up to outro start): {len(first_track_snippet)} samples")
-            print(f"    5. Second track snippet (from intro end): {len(second_track_snippet)} samples")
-            print(f"    6. Final mix: {len(mix_audio)} samples ({len(mix_audio)/current_sr/60:.1f} min)")
-            print(f"       = {len(first_track_snippet)} + {transition_length} + {len(second_track_snippet)}")
-            print(f"    Perfect continuity: outro_length={outro_length}, intro_length={intro_length}")
-            print(f"    Mix boundaries: [{len(first_track_snippet)}→{len(first_track_snippet)+transition_length}→{len(mix_audio)}]")
+            # Get the overlapping part from track2 (from its aligned start position)
+            track2_overlap = stretched_track.audio[track2_start_sample:track2_start_sample + len(track1_overlap)]
+            
+            # Ensure both overlaps are the same length
+            min_overlap_length = min(len(track1_overlap), len(track2_overlap))
+            if min_overlap_length <= 0:
+                # Fallback: just concatenate tracks
+                mix_audio = np.concatenate([mix_audio, stretched_track.audio])
+                print(f"  Warning: No overlap possible, tracks concatenated directly")
+            else:
+                track1_overlap = track1_overlap[:min_overlap_length]
+                track2_overlap = track2_overlap[:min_overlap_length]
+                
+                # Create crossfade of the overlapping segments
+                fade_samples = min_overlap_length
+                fade_out = np.cos(np.linspace(0, np.pi/2, fade_samples))
+                fade_in = np.sin(np.linspace(0, np.pi/2, fade_samples))
+                
+                crossfaded_overlap = track1_overlap * fade_out + track2_overlap * fade_in
+                
+                # Get the rest of track2 after the overlap
+                track2_remainder = stretched_track.audio[track2_start_sample + min_overlap_length:]
+                
+                # Build the complete mix: [mix_before_transition] + [crossfaded_overlap] + [track2_remainder]
+                mix_audio = np.concatenate([
+                    mix_before_transition,
+                    crossfaded_overlap, 
+                    track2_remainder
+                ])
+            
+            if min_overlap_length > 0:
+                print(f"  Track {i+1} mixed using natural overlay approach:")
+                print(f"    Mix before transition: {len(mix_before_transition)} samples")
+                print(f"    Crossfaded overlap: {min_overlap_length} samples ({min_overlap_length/current_sr:.1f}s)")
+                print(f"    Track2 remainder: {len(track2_remainder)} samples")
+                print(f"    Final mix: {len(mix_audio)} samples ({len(mix_audio)/current_sr/60:.1f} min)")
+                print(f"    Structure: {len(mix_before_transition)} + {min_overlap_length} + {len(track2_remainder)} = {len(mix_audio)}")
+                print(f"    Downbeat alignment: track1[{track1_end_sample}] ↔ track2[{track2_start_sample}]")
             
             print(f"  Mix length so far: {len(mix_audio) / current_sr / 60:.1f} minutes\n")
         
