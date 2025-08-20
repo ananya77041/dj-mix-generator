@@ -16,7 +16,7 @@ from models import Track
 class DJMixGenerator:
     """Main DJ Mix Generator class that coordinates audio analysis and mix generation"""
     
-    def __init__(self, use_cache: bool = True, manual_downbeats: bool = False, allow_irregular_tempo: bool = False, tempo_strategy: str = "sequential", interactive_beats: bool = False, enable_eq_matching: bool = True, enable_volume_matching: bool = True, enable_peak_alignment: bool = True, eq_strength: float = 0.5, enable_tempo_correction: bool = True):
+    def __init__(self, use_cache: bool = True, manual_downbeats: bool = False, allow_irregular_tempo: bool = False, tempo_strategy: str = "uniform", interactive_beats: bool = False, enable_eq_matching: bool = False, enable_volume_matching: bool = False, enable_peak_alignment: bool = True, eq_strength: float = 0.1, enable_tempo_correction: bool = False):
         self.tracks: List[Track] = []
         self.analyzer = AudioAnalyzer(use_cache=use_cache, manual_downbeats=manual_downbeats, allow_irregular_tempo=allow_irregular_tempo)
         self.mixer = MixGenerator(tempo_strategy=tempo_strategy, interactive_beats=interactive_beats, enable_eq_matching=enable_eq_matching, enable_volume_matching=enable_volume_matching, enable_peak_alignment=enable_peak_alignment, eq_strength=eq_strength, enable_tempo_correction=enable_tempo_correction)
@@ -159,12 +159,12 @@ def main():
     manual_downbeats = False
     allow_irregular_tempo = False
     use_cache = True
-    tempo_strategy = "sequential"
-    transition_measures = None
+    tempo_strategy = "uniform"
+    transition_measures = 16
     transition_seconds = 30.0
     interactive_beats = False
-    enable_eq_matching = True
-    enable_volume_matching = True
+    enable_eq_matching = False
+    enable_volume_matching = False
     enable_peak_alignment = True
     enable_tempo_correction = True
     eq_strength = 0.5
