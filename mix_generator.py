@@ -10,16 +10,24 @@ import os
 from typing import List, Tuple
 from models import Track
 from beat_utils import BeatAligner
+from scipy import signal
+from scipy.signal import hilbert
 
 
 class MixGenerator:
     """Handles DJ mix generation with transitions and beatmatching"""
     
-    def __init__(self, tempo_strategy: str = "sequential", interactive_beats: bool = False):
+    def __init__(self, tempo_strategy: str = "sequential", interactive_beats: bool = False, 
+                 enable_eq_matching: bool = True, enable_volume_matching: bool = True, eq_strength: float = 0.5):
         self.beat_aligner = BeatAligner(interactive_beats=interactive_beats)
         self.tempo_strategy = tempo_strategy
         self.target_bpm = None  # Will be set based on strategy
         self.interactive_beats = interactive_beats
+        
+        # Audio quality settings
+        self.enable_eq_matching = enable_eq_matching
+        self.enable_volume_matching = enable_volume_matching
+        self.eq_strength = eq_strength
     
     def measures_to_samples(self, measures: int, bpm: float, sr: int, beats_per_measure: int = 4) -> int:
         """Convert measures to audio samples based on BPM and sample rate"""
@@ -377,6 +385,196 @@ class MixGenerator:
         
         return actual_bpm
     
+    def _analyze_audio_characteristics(self, audio: np.ndarray, sr: int) -> dict:
+        """
+        Analyze audio characteristics for quality matching.
+        Returns spectral profile, dynamics, and loudness metrics.
+        """
+        try:
+            # RMS level (loudness)
+            rms = np.sqrt(np.mean(audio**2))
+            
+            # Peak level
+            peak = np.max(np.abs(audio))
+            
+            # Dynamic range (crest factor)
+            crest_factor = peak / rms if rms > 0 else 1.0
+            
+            # Spectral analysis using STFT
+            D = librosa.stft(audio, hop_length=512, n_fft=2048)
+            magnitude = np.abs(D)
+            
+            # Average spectral profile (frequency response)
+            spectral_profile = np.mean(magnitude, axis=1)
+            
+            # Spectral centroid (brightness)
+            spectral_centroid = librosa.feature.spectral_centroid(y=audio, sr=sr)[0]
+            avg_brightness = np.mean(spectral_centroid)
+            
+            # Low, mid, high frequency energy
+            n_bins = len(spectral_profile)
+            low_bins = n_bins // 8      # ~0-2.7kHz at 44.1kHz
+            mid_bins = n_bins // 2      # ~0-11kHz at 44.1kHz  
+            high_bins = n_bins * 3 // 4 # ~0-16.5kHz at 44.1kHz
+            
+            low_energy = np.sum(spectral_profile[:low_bins])
+            mid_energy = np.sum(spectral_profile[low_bins:mid_bins]) 
+            high_energy = np.sum(spectral_profile[mid_bins:high_bins])
+            total_energy = low_energy + mid_energy + high_energy
+            
+            if total_energy > 0:
+                low_ratio = low_energy / total_energy
+                mid_ratio = mid_energy / total_energy
+                high_ratio = high_energy / total_energy
+            else:
+                low_ratio = mid_ratio = high_ratio = 0.33
+            
+            return {
+                'rms': rms,
+                'peak': peak,
+                'crest_factor': crest_factor,
+                'spectral_profile': spectral_profile,
+                'brightness': avg_brightness,
+                'low_ratio': low_ratio,
+                'mid_ratio': mid_ratio,
+                'high_ratio': high_ratio,
+                'sample_rate': sr
+            }
+            
+        except Exception as e:
+            print(f"    Warning: Audio analysis failed: {e}")
+            # Return safe defaults
+            return {
+                'rms': 0.1,
+                'peak': 0.5,
+                'crest_factor': 5.0,
+                'spectral_profile': np.ones(1025),
+                'brightness': 2000.0,
+                'low_ratio': 0.33,
+                'mid_ratio': 0.33,
+                'high_ratio': 0.33,
+                'sample_rate': sr
+            }
+    
+    def _normalize_volume(self, audio: np.ndarray, target_rms: float = None, target_peak: float = 0.8) -> np.ndarray:
+        """
+        Normalize audio volume to target RMS or peak level.
+        Professional loudness normalization for consistent levels.
+        """
+        try:
+            current_rms = np.sqrt(np.mean(audio**2))
+            current_peak = np.max(np.abs(audio))
+            
+            if current_rms == 0 or current_peak == 0:
+                print(f"    Warning: Silent audio detected, skipping normalization")
+                return audio
+            
+            # Use target RMS if provided, otherwise normalize by peak
+            if target_rms is not None:
+                # RMS-based normalization (better for perceived loudness)
+                scale_factor = target_rms / current_rms
+                print(f"    RMS normalization: {current_rms:.4f} -> {target_rms:.4f} (x{scale_factor:.3f})")
+            else:
+                # Peak-based normalization (prevents clipping)
+                scale_factor = target_peak / current_peak
+                print(f"    Peak normalization: {current_peak:.4f} -> {target_peak:.4f} (x{scale_factor:.3f})")
+            
+            # Apply scaling with limiter to prevent clipping
+            normalized_audio = audio * scale_factor
+            
+            # Soft limiter if we exceed target peak
+            if np.max(np.abs(normalized_audio)) > target_peak:
+                excess_ratio = np.max(np.abs(normalized_audio)) / target_peak
+                # Soft compression for peaks above target
+                normalized_audio = np.sign(normalized_audio) * np.minimum(
+                    np.abs(normalized_audio), 
+                    target_peak * (1 - np.exp(-(np.abs(normalized_audio) / target_peak)))
+                )
+                print(f"    Soft limiting applied (excess: {excess_ratio:.3f})")
+            
+            return normalized_audio
+            
+        except Exception as e:
+            print(f"    Warning: Volume normalization failed: {e}")
+            return audio
+    
+    def _match_eq_profile(self, source_audio: np.ndarray, target_characteristics: dict, sr: int, strength: float = 0.5) -> np.ndarray:
+        """
+        Match the EQ profile of source audio to target characteristics.
+        Uses spectral shaping with overlapping frequency bands.
+        """
+        try:
+            print(f"    Applying EQ matching (strength: {strength:.1f})...")
+            
+            # Analyze source audio characteristics
+            source_chars = self._analyze_audio_characteristics(source_audio, sr)
+            
+            # Calculate frequency band adjustments
+            low_adjustment = target_characteristics['low_ratio'] / source_chars['low_ratio'] if source_chars['low_ratio'] > 0.01 else 1.0
+            mid_adjustment = target_characteristics['mid_ratio'] / source_chars['mid_ratio'] if source_chars['mid_ratio'] > 0.01 else 1.0
+            high_adjustment = target_characteristics['high_ratio'] / source_chars['high_ratio'] if source_chars['high_ratio'] > 0.01 else 1.0
+            
+            # Limit adjustments to reasonable range (-12dB to +12dB)
+            low_adjustment = np.clip(low_adjustment, 0.25, 4.0)
+            mid_adjustment = np.clip(mid_adjustment, 0.25, 4.0)  
+            high_adjustment = np.clip(high_adjustment, 0.25, 4.0)
+            
+            print(f"    EQ adjustments - Low: {20*np.log10(low_adjustment):.1f}dB, Mid: {20*np.log10(mid_adjustment):.1f}dB, High: {20*np.log10(high_adjustment):.1f}dB")
+            
+            # Apply spectral shaping using STFT
+            D = librosa.stft(source_audio, hop_length=512, n_fft=2048)
+            magnitude = np.abs(D)
+            phase = np.angle(D)
+            
+            # Create frequency-dependent gain curve
+            n_bins = magnitude.shape[0]
+            gain_curve = np.ones(n_bins)
+            
+            # Define frequency bands (approximate)
+            low_cutoff = n_bins // 8      # ~2.7kHz
+            mid_cutoff = n_bins // 2      # ~11kHz 
+            high_cutoff = n_bins * 3 // 4 # ~16.5kHz
+            
+            # Apply smoothed gains across frequency bands
+            # Low frequencies
+            gain_curve[:low_cutoff] *= low_adjustment
+            
+            # Mid frequencies with smooth transition
+            for i in range(low_cutoff, mid_cutoff):
+                blend = (i - low_cutoff) / (mid_cutoff - low_cutoff)
+                gain_curve[i] *= (low_adjustment * (1 - blend) + mid_adjustment * blend)
+            
+            # High frequencies with smooth transition  
+            for i in range(mid_cutoff, high_cutoff):
+                blend = (i - mid_cutoff) / (high_cutoff - mid_cutoff)
+                gain_curve[i] *= (mid_adjustment * (1 - blend) + high_adjustment * blend)
+            
+            # Very high frequencies
+            gain_curve[high_cutoff:] *= high_adjustment
+            
+            # Apply strength factor (blend with original)
+            gain_curve = 1.0 + strength * (gain_curve - 1.0)
+            
+            # Apply gain curve to magnitude spectrum
+            eq_magnitude = magnitude * gain_curve[:, np.newaxis]
+            
+            # Reconstruct audio
+            eq_complex = eq_magnitude * np.exp(1j * phase)
+            eq_audio = librosa.istft(eq_complex, hop_length=512)
+            
+            # Ensure same length as input
+            if len(eq_audio) < len(source_audio):
+                eq_audio = np.pad(eq_audio, (0, len(source_audio) - len(eq_audio)), 'constant')
+            else:
+                eq_audio = eq_audio[:len(source_audio)]
+            
+            print(f"    EQ matching applied successfully")
+            return eq_audio
+            
+        except Exception as e:
+            print(f"    Warning: EQ matching failed: {e}")
+            return source_audio
+    
     def _create_crossfade(self, track1: Track, track2: Track, transition_duration: float) -> Tuple[np.ndarray, np.ndarray, Track]:
         """Create crossfade transition between two tempo-matched tracks
         
@@ -409,13 +607,71 @@ class MixGenerator:
         track1_outro = track1_outro[:min_length]
         track2_intro = track2_intro[:min_length]
         
-        # Create equal-power crossfade curves
+        # PROFESSIONAL AUDIO QUALITY IMPROVEMENTS
+        if self.enable_volume_matching or self.enable_eq_matching:
+            print(f"  Applying professional audio quality processing...")
+            
+            # 1. Analyze audio characteristics if needed
+            if self.enable_volume_matching or self.enable_eq_matching:
+                print(f"  Analyzing track characteristics for quality matching...")
+                track1_chars = self._analyze_audio_characteristics(track1_outro, track1.sr)
+                track2_chars = self._analyze_audio_characteristics(track2_intro, track2.sr)
+            
+            # 2. Volume normalization - match RMS levels
+            if self.enable_volume_matching:
+                print(f"  Volume levels - Track1 RMS: {track1_chars['rms']:.4f}, Track2 RMS: {track2_chars['rms']:.4f}")
+                
+                # Use average RMS as target for consistent perceived loudness
+                target_rms = (track1_chars['rms'] + track2_chars['rms']) / 2.0
+                print(f"  Normalizing to target RMS: {target_rms:.4f}")
+                
+                track1_outro_normalized = self._normalize_volume(track1_outro, target_rms=target_rms)
+                track2_intro_normalized = self._normalize_volume(track2_intro, target_rms=target_rms)
+            else:
+                print(f"  Volume normalization disabled")
+                track1_outro_normalized = track1_outro
+                track2_intro_normalized = track2_intro
+            
+            # 3. EQ matching for seamless tonal continuity
+            if self.enable_eq_matching and self.eq_strength > 0.0:
+                print(f"  Spectral balance - Track1 (L/M/H): {track1_chars['low_ratio']:.2f}/{track1_chars['mid_ratio']:.2f}/{track1_chars['high_ratio']:.2f}")
+                print(f"  Spectral balance - Track2 (L/M/H): {track2_chars['low_ratio']:.2f}/{track2_chars['mid_ratio']:.2f}/{track2_chars['high_ratio']:.2f}")
+                
+                # Create balanced target characteristics (average of both tracks)
+                target_chars = {
+                    'low_ratio': (track1_chars['low_ratio'] + track2_chars['low_ratio']) / 2.0,
+                    'mid_ratio': (track1_chars['mid_ratio'] + track2_chars['mid_ratio']) / 2.0,
+                    'high_ratio': (track1_chars['high_ratio'] + track2_chars['high_ratio']) / 2.0,
+                }
+                print(f"  Target spectral balance (L/M/H): {target_chars['low_ratio']:.2f}/{target_chars['mid_ratio']:.2f}/{target_chars['high_ratio']:.2f}")
+                
+                # Apply EQ matching with user-specified strength
+                track1_outro_processed = self._match_eq_profile(track1_outro_normalized, target_chars, track1.sr, self.eq_strength)
+                track2_intro_processed = self._match_eq_profile(track2_intro_normalized, target_chars, track2.sr, self.eq_strength)
+            else:
+                print(f"  EQ matching disabled")
+                track1_outro_processed = track1_outro_normalized
+                track2_intro_processed = track2_intro_normalized
+            
+            print(f"  Professional audio processing complete!")
+        else:
+            print(f"  Audio quality processing disabled - using original audio")
+            track1_outro_processed = track1_outro
+            track2_intro_processed = track2_intro
+        
+        # 4. Create equal-power crossfade curves with processed audio
         fade_samples = min_length
         fade_out = np.cos(np.linspace(0, np.pi/2, fade_samples))
         fade_in = np.sin(np.linspace(0, np.pi/2, fade_samples))
         
-        # Apply crossfade
-        transition = track1_outro * fade_out + track2_intro * fade_in
+        # Apply crossfade with quality-matched audio
+        transition = track1_outro_processed * fade_out + track2_intro_processed * fade_in
+        
+        # 5. Final output normalization to prevent clipping
+        final_peak = np.max(np.abs(transition))
+        if final_peak > 0.95:
+            transition = transition * (0.95 / final_peak)
+            print(f"  Final transition normalized (peak: {final_peak:.3f} -> 0.95)")
         
         return transition, track2
     

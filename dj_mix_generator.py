@@ -16,10 +16,10 @@ from models import Track
 class DJMixGenerator:
     """Main DJ Mix Generator class that coordinates audio analysis and mix generation"""
     
-    def __init__(self, use_cache: bool = True, manual_downbeats: bool = False, allow_irregular_tempo: bool = False, tempo_strategy: str = "sequential", interactive_beats: bool = False):
+    def __init__(self, use_cache: bool = True, manual_downbeats: bool = False, allow_irregular_tempo: bool = False, tempo_strategy: str = "sequential", interactive_beats: bool = False, enable_eq_matching: bool = True, enable_volume_matching: bool = True, eq_strength: float = 0.5):
         self.tracks: List[Track] = []
         self.analyzer = AudioAnalyzer(use_cache=use_cache, manual_downbeats=manual_downbeats, allow_irregular_tempo=allow_irregular_tempo)
-        self.mixer = MixGenerator(tempo_strategy=tempo_strategy, interactive_beats=interactive_beats)
+        self.mixer = MixGenerator(tempo_strategy=tempo_strategy, interactive_beats=interactive_beats, enable_eq_matching=enable_eq_matching, enable_volume_matching=enable_volume_matching, eq_strength=eq_strength)
         self.key_matcher = KeyMatcher()
         self.tempo_strategy = tempo_strategy
         self.interactive_beats = interactive_beats
@@ -118,6 +118,9 @@ def main():
         print("  --transition-measures=N Transition length in measures (default: 8, overrides seconds)")
         print("  --transition-seconds=N  Transition length in seconds (default: 30, used if measures not specified)")
         print("  --interactive-beats     Use interactive beatgrid alignment GUI for transitions")
+        print("  --no-eq-matching       Disable EQ matching during transitions (faster processing)")
+        print("  --no-volume-matching   Disable volume normalization during transitions")
+        print("  --eq-strength=N        EQ matching strength: 0.0-1.0 (default: 0.5, 0=off)")
         print("  --no-cache             Disable track analysis caching")
         print("  --cache-info           Show cache information and exit")
         print("  --clear-cache          Clear track analysis cache and exit")
@@ -134,6 +137,9 @@ def main():
     transition_measures = None
     transition_seconds = 30.0
     interactive_beats = False
+    enable_eq_matching = True
+    enable_volume_matching = True
+    eq_strength = 0.5
     playlist = []
     output_path = "dj_mix.wav"
     
@@ -191,6 +197,30 @@ def main():
             interactive_beats = True
             args.remove("--interactive-beats")
         
+        # Audio quality options
+        if "--no-eq-matching" in args:
+            enable_eq_matching = False
+            args.remove("--no-eq-matching")
+        
+        if "--no-volume-matching" in args:
+            enable_volume_matching = False
+            args.remove("--no-volume-matching")
+        
+        # Check for EQ strength setting
+        eq_strength_args = [arg for arg in args if arg.startswith("--eq-strength=")]
+        if eq_strength_args:
+            try:
+                eq_strength = float(eq_strength_args[0].split("=", 1)[1])
+                if not 0.0 <= eq_strength <= 1.0:
+                    print("Error: EQ strength must be between 0.0 and 1.0.")
+                    return 1
+                if eq_strength == 0.0:
+                    enable_eq_matching = False  # Disable EQ matching if strength is 0
+                args.remove(eq_strength_args[0])
+            except ValueError:
+                print("Error: EQ strength must be a valid number between 0.0 and 1.0.")
+                return 1
+        
         # Check for tempo strategy
         tempo_strategy_args = [arg for arg in args if arg.startswith("--tempo-strategy=")]
         if tempo_strategy_args:
@@ -234,7 +264,7 @@ def main():
             return 1
     
     try:
-        dj = DJMixGenerator(use_cache=use_cache, manual_downbeats=manual_downbeats, allow_irregular_tempo=allow_irregular_tempo, tempo_strategy=tempo_strategy, interactive_beats=interactive_beats)
+        dj = DJMixGenerator(use_cache=use_cache, manual_downbeats=manual_downbeats, allow_irregular_tempo=allow_irregular_tempo, tempo_strategy=tempo_strategy, interactive_beats=interactive_beats, enable_eq_matching=enable_eq_matching, enable_volume_matching=enable_volume_matching, eq_strength=eq_strength)
         dj.load_playlist(playlist)
         
         # Optionally reorder by key
