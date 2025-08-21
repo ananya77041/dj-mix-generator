@@ -29,7 +29,7 @@ class MixGenerator:
     
     def __init__(self, config=None, tempo_strategy: str = "sequential", interactive_beats: bool = False, 
                  enable_eq_matching: bool = True, enable_volume_matching: bool = True, eq_strength: float = 0.5,
-                 enable_peak_alignment: bool = True, enable_tempo_correction: bool = True, enable_lf_transition: bool = False, enable_mf_transition: bool = False, transition_downbeats: bool = False):
+                 enable_peak_alignment: bool = True, enable_tempo_correction: bool = True, enable_lf_transition: bool = False, enable_mf_transition: bool = False, enable_hf_transition: bool = False, transition_downbeats: bool = False):
         
         # Handle new config object approach
         if config is not None:
@@ -43,6 +43,7 @@ class MixGenerator:
             enable_tempo_correction = config.audio_quality.tempo_correction
             enable_lf_transition = config.transition_settings.enable_lf_transition
             enable_mf_transition = config.transition_settings.enable_mf_transition
+            enable_hf_transition = config.transition_settings.enable_hf_transition
             transition_downbeats = config.transition_settings.use_downbeat_mapping
         
         self.beat_aligner = BeatAligner(interactive_beats=interactive_beats)
@@ -58,6 +59,7 @@ class MixGenerator:
         self.enable_tempo_correction = enable_tempo_correction
         self.enable_lf_transition = enable_lf_transition
         self.enable_mf_transition = enable_mf_transition
+        self.enable_hf_transition = enable_hf_transition
         self.transition_downbeats = transition_downbeats
     
     def _create_track_from_existing(self, existing_track: Track, new_audio: np.ndarray = None, 
@@ -1571,6 +1573,100 @@ class MixGenerator:
             print(f"    Warning: MF blending failed ({e}), using original audio")
             return track1_outro, track2_intro
     
+    def _apply_hf_transition(self, track1_outro: np.ndarray, track2_intro: np.ndarray, sr: int) -> Tuple[np.ndarray, np.ndarray]:
+        """
+        Apply high-frequency transition blending for crisp treble transitions.
+        
+        Gradually blends high frequencies from 100% track1 at start to 100% track2 at end.
+        This creates crisp transitions for treble content like cymbals, hi-hats, and sparkle.
+        
+        Args:
+            track1_outro: Audio segment from track1 (fading out)
+            track2_intro: Audio segment from track2 (fading in)
+            sr: Sample rate
+            
+        Returns:
+            Tuple of (track1_outro_processed, track2_intro_processed)
+        """
+        print(f"  Applying high-frequency transition blending...")
+        
+        try:
+            from scipy.signal import butter, filtfilt
+            try:
+                from ..core.config import AudioConstants
+            except ImportError:
+                from core.config import AudioConstants
+            
+            # Define frequency bands using constants
+            # Low frequencies: 20-200 Hz (bass, kick drums) - keep normal crossfade
+            # Mid frequencies: 200-2000 Hz (melody, harmonics, vocals) - keep normal crossfade  
+            # High frequencies: 2000-8000 Hz (cymbals, hi-hats, sparkle) - special blending
+            lf_cutoff = AudioConstants.MID_FREQ_LOW_CUTOFF    # 200 Hz - low/mid boundary
+            mf_cutoff = AudioConstants.HIGH_FREQ_LOW_CUTOFF   # 2000 Hz - mid/high boundary
+            hf_cutoff = AudioConstants.HIGH_FREQ_HIGH_CUTOFF  # 8000 Hz - high frequency limit
+            nyquist = sr / 2
+            
+            if mf_cutoff >= nyquist or hf_cutoff >= nyquist:
+                print(f"    Warning: HF cutoffs ({mf_cutoff}-{hf_cutoff} Hz) >= Nyquist frequency ({nyquist} Hz), skipping HF blending")
+                return track1_outro, track2_intro
+            
+            # Create band-pass and other filters
+            # Low-pass: keeps frequencies below lf_cutoff (bass)
+            lp_b, lp_a = butter(4, lf_cutoff / nyquist, btype='low')
+            # Band-pass: keeps frequencies between lf_cutoff and mf_cutoff (mids)  
+            bp_b, bp_a = butter(4, [lf_cutoff / nyquist, mf_cutoff / nyquist], btype='band')
+            # Band-pass for highs: keeps frequencies between mf_cutoff and hf_cutoff (highs)
+            hp_b, hp_a = butter(4, [mf_cutoff / nyquist, min(hf_cutoff / nyquist, 0.95)], btype='band')
+            
+            n_samples = len(track1_outro)
+            
+            # Ensure both tracks have the same length
+            min_length = min(len(track1_outro), len(track2_intro))
+            track1_outro = track1_outro[:min_length]
+            track2_intro = track2_intro[:min_length] 
+            n_samples = min_length
+            
+            # Separate frequency bands for track1
+            track1_lf = filtfilt(lp_b, lp_a, track1_outro)    # Low frequencies (bass)
+            track1_mf = filtfilt(bp_b, bp_a, track1_outro)    # Mid frequencies (melody)  
+            track1_hf = filtfilt(hp_b, hp_a, track1_outro)    # High frequencies (treble)
+            
+            # Separate frequency bands for track2  
+            track2_lf = filtfilt(lp_b, lp_a, track2_intro)    # Low frequencies (bass)
+            track2_mf = filtfilt(bp_b, bp_a, track2_intro)    # Mid frequencies (melody)
+            track2_hf = filtfilt(hp_b, hp_a, track2_intro)    # High frequencies (treble)
+            
+            # Create gradual blending curves for high frequencies
+            # High frequencies fade more gradually for crisp transitions
+            hf_fade_curve = np.cos(np.linspace(0, np.pi/2, n_samples))**1.5      # Slower HF fade out
+            hf_blend_curve = np.sin(np.linspace(0, np.pi/2, n_samples))**1.5     # Slower HF blend in
+            
+            # For low and mid frequencies, use normal crossfade curves
+            normal_fade_out = np.cos(np.linspace(0, np.pi/2, n_samples))**2  # Normal fade out
+            normal_fade_in = np.sin(np.linspace(0, np.pi/2, n_samples))**2   # Normal fade in
+            
+            # Process track1: gradual HF fade out, normal LF/MF fadeout
+            track1_lf_processed = track1_lf * normal_fade_out
+            track1_mf_processed = track1_mf * normal_fade_out  
+            track1_hf_processed = track1_hf * hf_fade_curve
+            track1_processed = track1_lf_processed + track1_mf_processed + track1_hf_processed
+            
+            # Process track2: gradual HF fade in, normal LF/MF fadein
+            track2_lf_processed = track2_lf * normal_fade_in
+            track2_mf_processed = track2_mf * normal_fade_in
+            track2_hf_processed = track2_hf * hf_blend_curve  
+            track2_processed = track2_lf_processed + track2_mf_processed + track2_hf_processed
+            
+            print(f"    High-frequency blending applied (range: {mf_cutoff}-{hf_cutoff} Hz)")
+            return track1_processed, track2_processed
+            
+        except ImportError:
+            print(f"    Warning: scipy.signal not available, skipping HF blending")
+            return track1_outro, track2_intro
+        except Exception as e:
+            print(f"    Warning: HF blending failed ({e}), using original audio")
+            return track1_outro, track2_intro
+    
     def _create_enhanced_crossfade(self, track1: Track, track2: Track, transition_duration: float) -> Tuple[np.ndarray, np.ndarray, Track]:
         """
         Create enhanced crossfade with quality improvements while maintaining sample continuity.
@@ -1623,13 +1719,20 @@ class MixGenerator:
             track1_outro, track2_intro, track1, track2, outro_start, intro_start
         )
         
-        # Apply frequency transition blending if enabled
+        # Apply frequency transition blending if enabled (can be combined)
         if self.enable_lf_transition:
             track1_outro_enhanced, track2_intro_enhanced = self._apply_lf_transition(
                 track1_outro_enhanced, track2_intro_enhanced, track1.sr
             )
-        elif self.enable_mf_transition:
+            print(f"    Low-frequency blending applied (cutoff: {200.0} Hz)")
+            
+        if self.enable_mf_transition:
             track1_outro_enhanced, track2_intro_enhanced = self._apply_mf_transition(
+                track1_outro_enhanced, track2_intro_enhanced, track1.sr
+            )
+            
+        if self.enable_hf_transition:
+            track1_outro_enhanced, track2_intro_enhanced = self._apply_hf_transition(
                 track1_outro_enhanced, track2_intro_enhanced, track1.sr
             )
         
@@ -1639,8 +1742,8 @@ class MixGenerator:
         fade_in = np.sin(np.linspace(0, np.pi/2, fade_samples))
         
         # Apply crossfade with enhanced audio
-        if self.enable_lf_transition or self.enable_mf_transition:
-            # For LF/MF transition, the audio is already blended, just sum them
+        if self.enable_lf_transition or self.enable_mf_transition or self.enable_hf_transition:
+            # For frequency transitions, the audio is already blended, just sum them
             transition = track1_outro_enhanced + track2_intro_enhanced
         else:
             # Normal crossfade
@@ -2035,18 +2138,26 @@ class MixGenerator:
                 track1_overlap = track1_overlap[:fade_samples]
                 track2_overlap = track2_overlap[:fade_samples]
                 
-                # Apply frequency transition blending if enabled
+                # Apply frequency transition blending if enabled (can be combined)
                 if self.enable_lf_transition:
                     track1_overlap, track2_overlap = self._apply_lf_transition(
                         track1_overlap, track2_overlap, current_sr
                     )
-                    # For LF transition, the audio is already blended
-                    crossfaded_overlap = track1_overlap + track2_overlap
-                elif self.enable_mf_transition:
+                    print(f"    Low-frequency blending applied (cutoff: {200.0} Hz)")
+                    
+                if self.enable_mf_transition:
                     track1_overlap, track2_overlap = self._apply_mf_transition(
                         track1_overlap, track2_overlap, current_sr
                     )
-                    # For MF transition, the audio is already blended
+                    
+                if self.enable_hf_transition:
+                    track1_overlap, track2_overlap = self._apply_hf_transition(
+                        track1_overlap, track2_overlap, current_sr
+                    )
+                
+                # Apply crossfade based on transition types
+                if self.enable_lf_transition or self.enable_mf_transition or self.enable_hf_transition:
+                    # For frequency transitions, the audio is already blended
                     crossfaded_overlap = track1_overlap + track2_overlap
                 else:
                     # Normal crossfade
@@ -2113,6 +2224,150 @@ class MixGenerator:
         print(f"Sample rate: {current_sr} Hz")
         print(f"File size: {os.path.getsize(output_path) / (1024*1024):.1f} MB")
     
+    def _process_track_transition(self, prev_track: Track, current_track: Track, transition_duration: float, current_mix_audio: np.ndarray = None) -> tuple[np.ndarray, Track]:
+        """
+        Process a single track transition using the exact same logic as main mixing.
+        This method contains the shared transition logic used by both full mix and transitions-only generation.
+        
+        Args:
+            prev_track: The previous track (already processed)
+            current_track: The current track to mix in
+            transition_duration: Duration of the transition in seconds
+            current_mix_audio: Current mix audio (if None, uses prev_track.audio)
+            
+        Returns:
+            tuple: (new_mix_audio, processed_current_track)
+        """
+        if current_mix_audio is None:
+            current_mix_audio = prev_track.audio.copy()
+        
+        current_sr = prev_track.sr
+        
+        # Ensure sample rates match
+        if current_track.sr != current_sr:
+            current_track.audio = librosa.resample(
+                current_track.audio, 
+                orig_sr=current_track.sr, 
+                target_sr=current_sr
+            )
+            current_track.sr = current_sr
+        
+        # DYNAMIC TEMPO RAMPING: Check if we need tempo ramping
+        prev_original_bpm = prev_track.bpm
+        current_original_bpm = current_track.bpm
+        bpm_difference = abs(current_original_bpm - prev_original_bpm)
+        
+        tempo_ramp_needed = bpm_difference > 5.0
+        if tempo_ramp_needed:
+            # Calculate new target BPM as average of the two involved tracks
+            new_target_bpm = (prev_original_bpm + current_original_bpm) / 2
+            tempo_ramp_data = {
+                'start_bpm': prev_original_bpm,
+                'end_bpm': new_target_bpm,
+                'ramp_needed': True
+            }
+        else:
+            tempo_ramp_data = {'ramp_needed': False}
+        
+        # Stretch the current track based on tempo strategy
+        if str(self.tempo_strategy) == "sequential":
+            target_bpm_for_current = new_target_bpm if tempo_ramp_needed else prev_track.bpm
+            stretched_track = self._stretch_track_to_bpm(current_track, target_bpm_for_current)
+        elif str(self.tempo_strategy) == "uniform":
+            stretched_track = self._stretch_track_to_bpm(current_track, self.target_bpm)
+        elif str(self.tempo_strategy) == "match-track":
+            stretched_track = current_track
+        else:
+            stretched_track = current_track
+        
+        # Calculate transition length in samples
+        transition_samples = int(transition_duration * prev_track.sr)
+        
+        # Simple overlay approach - start track2 from beginning and overlay with end of current mix
+        mix_length_before_track1_end = len(current_mix_audio)
+        transition_start_in_mix = max(0, mix_length_before_track1_end - transition_samples)
+        
+        # Split the current mix at the transition point
+        mix_before_transition = current_mix_audio[:transition_start_in_mix]
+        track1_overlap = current_mix_audio[transition_start_in_mix:]
+        
+        # Start track2 from the beginning
+        track2_start_in_track = 0
+        track2_overlap = stretched_track.audio[track2_start_in_track:track2_start_in_track + len(track1_overlap)]
+        
+        # Ensure both overlaps are the same length
+        min_overlap_length = min(len(track1_overlap), len(track2_overlap))
+        if min_overlap_length <= 0:
+            # Fallback: just concatenate tracks
+            new_mix_audio = np.concatenate([current_mix_audio, stretched_track.audio])
+            return new_mix_audio, stretched_track
+        
+        track1_overlap = track1_overlap[:min_overlap_length]
+        track2_overlap = track2_overlap[:min_overlap_length]
+        
+        # Apply transition downbeat mapping if enabled
+        if self.transition_downbeats:
+            track1_overlap, track2_overlap = self._apply_transition_downbeat_mapping(
+                track1_overlap, track2_overlap, prev_track, stretched_track, current_sr, transition_duration
+            )
+        
+        # Apply intelligent beat alignment within the transition segments
+        track1_overlap, track2_overlap = self._apply_intelligent_transition_alignment(
+            track1_overlap, track2_overlap, prev_track, stretched_track,
+            transition_start_in_mix, track2_start_in_track, transition_duration
+        )
+        
+        # Apply tempo ramping during transition if needed
+        if tempo_ramp_data['ramp_needed'] and self.tempo_strategy != "match-track":
+            track1_overlap, track2_overlap = self._apply_tempo_ramp_to_transition(
+                track1_overlap, track2_overlap, tempo_ramp_data, current_sr
+            )
+        
+        # Apply match-track specific tempo ramping
+        if str(self.tempo_strategy) == "match-track":
+            track1_overlap, track2_overlap = self._apply_tempo_ramping(
+                track1_overlap, track2_overlap, prev_track.bpm, stretched_track.bpm, current_sr, transition_duration
+            )
+        
+        # Create crossfade of the overlapping segments
+        fade_samples = min(len(track1_overlap), len(track2_overlap))
+        fade_out = np.cos(np.linspace(0, np.pi/2, fade_samples))
+        fade_in = np.sin(np.linspace(0, np.pi/2, fade_samples))
+        
+        # Ensure both are same length after tempo ramping
+        track1_overlap = track1_overlap[:fade_samples]
+        track2_overlap = track2_overlap[:fade_samples]
+        
+        # Apply frequency transition blending if enabled
+        if self.enable_lf_transition:
+            track1_overlap, track2_overlap = self._apply_lf_transition(
+                track1_overlap, track2_overlap, current_sr
+            )
+        
+        if self.enable_mf_transition:
+            track1_overlap, track2_overlap = self._apply_mf_transition(
+                track1_overlap, track2_overlap, current_sr
+            )
+        
+        if self.enable_hf_transition:
+            track1_overlap, track2_overlap = self._apply_hf_transition(
+                track1_overlap, track2_overlap, current_sr
+            )
+        
+        # Note: Volume and EQ matching would be applied here if implemented
+        
+        # Create the final crossfaded overlap
+        crossfaded_overlap = track1_overlap * fade_out + track2_overlap * fade_in
+        
+        # Get the remainder of track2 (after the transition)
+        crossfade_end_in_track2 = track2_start_in_track + len(crossfaded_overlap)
+        track2_remainder = stretched_track.audio[crossfade_end_in_track2:]
+        
+        # Build the complete new mix
+        new_mix_audio = np.concatenate([mix_before_transition, crossfaded_overlap, track2_remainder])
+        
+        return new_mix_audio, stretched_track
+
     def _generate_complete_mini_mix(self, tracks: List[Track], transition_duration: float) -> np.ndarray:
         """
         Generate a complete mini-mix using the exact same full mixing process.
@@ -2222,29 +2477,48 @@ class MixGenerator:
 
     def _generate_transitions_only(self, tracks: List[Track], output_path: str, transition_duration: float, transition_measures: int = None):
         """
-        Generate only the transition sections with 2-measure buffers for preview testing
-        Each transition includes 2 measures from end of primary track + transition + 2 measures from start of secondary track
+        Generate only the transition sections with 2-measure buffers for preview testing.
+        Uses the same shared transition logic as the main mix path for consistency.
         """
         print("Creating transitions-only preview for testing...")
+        
+        # For match-track mode, use first track's BPM for calculations
+        bpm_for_calculation = self.target_bpm if self.target_bpm is not None else tracks[0].bpm
+        
         if transition_measures is not None:
-            print(f"Each transition: {transition_measures} measures ({transition_duration:.1f}s at {self.target_bpm:.1f} BPM)")
+            if str(self.tempo_strategy) == "match-track":
+                print(f"Each transition: {transition_measures} measures ({transition_duration:.1f}s at {bpm_for_calculation:.1f} BPM reference)")
+            else:
+                print(f"Each transition: {transition_measures} measures ({transition_duration:.1f}s at {bpm_for_calculation:.1f} BPM)")
         
         current_sr = tracks[0].sr
         
-        # Calculate 2 measures duration in seconds based on target BPM
-        # 2 measures = 8 beats (assuming 4/4 time signature)
-        beats_per_minute = self.target_bpm
+        # Calculate 2 measures duration for buffer
+        beats_per_minute = bpm_for_calculation
         beats_per_second = beats_per_minute / 60.0
         buffer_duration = 8 / beats_per_second  # 8 beats = 2 measures
         buffer_samples = int(buffer_duration * current_sr)
         
-        print(f"Using 2-measure buffers ({buffer_duration:.1f}s at {self.target_bpm:.1f} BPM)")
+        if str(self.tempo_strategy) == "match-track":
+            print(f"Using 2-measure buffers ({buffer_duration:.1f}s at {bpm_for_calculation:.1f} BPM reference)")
+        else:
+            print(f"Using 2-measure buffers ({buffer_duration:.1f}s at {bpm_for_calculation:.1f} BPM)")
         
         all_transitions = []
         silence_gap = np.zeros(int(1.0 * current_sr))  # 1 second gap between transitions
         
+        # Apply the same initial track processing as the main path
+        if str(self.tempo_strategy) == "uniform":
+            first_track = self._stretch_track_to_bpm(tracks[0], self.target_bpm)
+            print(f"Track 1: {first_track.filepath.name} (stretched to target BPM for transitions)")
+        else:
+            first_track = tracks[0]
+            print(f"Track 1: {first_track.filepath.name} (native BPM for transitions)")
+        
+        processed_tracks = [first_track]
+        
         for i in range(len(tracks) - 1):
-            current_track = tracks[i]
+            current_track = processed_tracks[i]
             next_track = tracks[i + 1]
             
             print(f"Transition {i+1}: {current_track.filepath.name} → {next_track.filepath.name}")
@@ -2259,39 +2533,31 @@ class MixGenerator:
                 )
                 next_track.sr = current_sr
             
-            # Create a mock "previous track state" for transition generation
-            # Use the full current track as if it were the current mix state
-            prev_track = self._create_track_from_existing(current_track)
+            # Use the shared transition processing method
+            print(f"  🎯 Using shared transition logic...")
+            complete_transition_mix, processed_next_track = self._process_track_transition(
+                current_track, next_track, transition_duration, current_track.audio
+            )
             
-            # Generate the complete mix using the exact same full mixing process
-            # Create a mini-mix with just these two tracks to get the authentic overlaid audio
+            # Store the processed track for the next iteration
+            processed_tracks.append(processed_next_track)
             
-            # Create a temporary list with just the two tracks for this transition
-            transition_tracks = [prev_track, next_track]
-            
-            # Use the full mixing process to create the authentic overlaid transition
-            complete_mix = self._generate_complete_mini_mix(transition_tracks, transition_duration)
-            
-            # Calculate extraction points from the complete mini-mix
-            # The mini-mix structure: [track1_body] [overlaid_transition] [track2_remainder]
-            # We want to extract: [2_measures_before] [overlaid_transition] [2_measures_after]
-            
+            # Calculate extraction points for the transition segment
             transition_samples = int(transition_duration * current_sr)
-            track1_length = len(prev_track.audio)
+            track1_length = len(current_track.audio)
             
-            # The transition starts at: track1_length - transition_samples
+            # The transition starts where track1 ends minus transition duration
             transition_start_in_mix = max(0, track1_length - transition_samples)
             transition_end_in_mix = transition_start_in_mix + transition_samples
             
-            # Extract with 2-measure buffers  
+            # Extract with 2-measure buffers: [buffer_before] [transition] [buffer_after]
             extract_start = max(0, transition_start_in_mix - buffer_samples)
-            extract_end = min(len(complete_mix), transition_end_in_mix + buffer_samples)
+            extract_end = min(len(complete_transition_mix), transition_end_in_mix + buffer_samples)
             
-            transition_segment = complete_mix[extract_start:extract_end]
+            transition_segment = complete_transition_mix[extract_start:extract_end]
             
             if len(transition_segment) > 0:
                 all_transitions.append(transition_segment)
-                
                 segment_duration = len(transition_segment) / current_sr
                 print(f"  Transition segment: {segment_duration:.1f}s (with 2-measure buffers: {buffer_duration:.1f}s before/after)")
             else:

@@ -8,6 +8,8 @@ import sys
 import os
 from pathlib import Path
 from typing import List
+from concurrent.futures import ThreadPoolExecutor, as_completed
+import threading
 
 # Add src directory to path for imports
 src_path = Path(__file__).parent.parent
@@ -94,6 +96,22 @@ class DJMixGeneratorCLI:
         self.tracks = []
         print(f"Loading playlist with {len(filepaths)} tracks...\\n")
         
+        # Check if we should use parallel processing
+        if not self.config.manual_downbeats and len(filepaths) > 1:
+            self._load_playlist_parallel(filepaths)
+        else:
+            self._load_playlist_sequential(filepaths)
+        
+        if not self.tracks:
+            raise ValueError("No valid tracks loaded!")
+        
+        print(f"Successfully loaded {len(self.tracks)} tracks.\\n")
+        
+        # Sort tracks by BPM and key for optimal mixing flow
+        self._sort_tracks_by_bpm_and_key()
+    
+    def _load_playlist_sequential(self, filepaths: List[str]):
+        """Load tracks sequentially (for manual mode or single track)"""
         for i, filepath in enumerate(filepaths, 1):
             if not os.path.exists(filepath):
                 print(f"Warning: File not found: {filepath}")
@@ -107,14 +125,88 @@ class DJMixGeneratorCLI:
                       f"Duration: {track.duration:.1f}s, Downbeats: {downbeat_count}\\n")
             except Exception as e:
                 print(f"Skipping {filepath} due to error: {e}\\n")
+    
+    def _load_playlist_parallel(self, filepaths: List[str]):
+        """Load tracks in parallel for automatic analysis mode"""
+        print("Using parallel processing for maximum compute power...")
         
-        if not self.tracks:
-            raise ValueError("No valid tracks loaded!")
+        # Filter out non-existent files first
+        valid_filepaths = []
+        for filepath in filepaths:
+            if os.path.exists(filepath):
+                valid_filepaths.append(filepath)
+            else:
+                print(f"Warning: File not found: {filepath}")
         
-        print(f"Successfully loaded {len(self.tracks)} tracks.\\n")
+        if not valid_filepaths:
+            return
         
-        # Sort tracks by BPM and key for optimal mixing flow
-        self._sort_tracks_by_bpm_and_key()
+        # Use thread lock for thread-safe cache operations
+        cache_lock = threading.Lock()
+        
+        def analyze_single_track(filepath: str) -> tuple[int, Track]:
+            """Analyze a single track with thread-safe cache access"""
+            try:
+                # Create analyzer instance with thread-safe cache access
+                analyzer = AudioAnalyzer(
+                    use_cache=self.config.use_cache,
+                    manual_downbeats=False,  # Always false for parallel processing
+                    allow_irregular_tempo=self.config.allow_irregular_tempo
+                )
+                
+                # Use cache lock for thread safety
+                if analyzer.use_cache and analyzer.cache:
+                    with cache_lock:
+                        cached_track = analyzer.cache.get_cached_analysis(filepath, False)
+                    if cached_track is not None:
+                        print(f"  ✓ {os.path.basename(filepath)} loaded from cache")
+                        return (filepaths.index(filepath), cached_track)
+                
+                # Perform analysis
+                track = analyzer.analyze_track(filepath)
+                
+                # Cache results with thread safety
+                if analyzer.use_cache and analyzer.cache:
+                    with cache_lock:
+                        analyzer.cache.cache_analysis(track, False)
+                
+                return (filepaths.index(filepath), track)
+            except Exception as e:
+                print(f"Skipping {filepath} due to error: {e}")
+                return (filepaths.index(filepath), None)
+        
+        # Use ThreadPoolExecutor for parallel processing
+        max_workers = min(len(valid_filepaths), os.cpu_count() or 4)
+        track_results = {}
+        
+        with ThreadPoolExecutor(max_workers=max_workers) as executor:
+            # Submit all analysis tasks
+            future_to_filepath = {executor.submit(analyze_single_track, filepath): filepath 
+                                for filepath in valid_filepaths}
+            
+            # Collect results as they complete
+            completed = 0
+            total = len(valid_filepaths)
+            
+            for future in as_completed(future_to_filepath):
+                filepath = future_to_filepath[future]
+                try:
+                    original_index, track = future.result()
+                    if track is not None:
+                        track_results[original_index] = track
+                        downbeat_count = len(track.downbeats) if len(track.downbeats) > 0 else 0
+                        completed += 1
+                        print(f"  [{completed}/{total}] {os.path.basename(filepath)}: "
+                              f"BPM: {track.bpm:.1f}, Key: {track.key}, "
+                              f"Duration: {track.duration:.1f}s, Downbeats: {downbeat_count}")
+                except Exception as e:
+                    print(f"Error processing {filepath}: {e}")
+        
+        # Sort tracks by original order and add to self.tracks
+        for i in sorted(track_results.keys()):
+            self.tracks.append(track_results[i])
+        
+        print(f"\\nParallel analysis completed: {len(self.tracks)} tracks loaded")
     
     def _sort_tracks_by_bpm_and_key(self):
         """Sort tracks by BPM (ascending), then by key within same BPM"""

@@ -45,8 +45,9 @@ class TransitionSettings:
     """Transition configuration settings"""
     measures: Optional[int] = 8
     seconds: Optional[float] = None
-    enable_lf_transition: bool = False
-    enable_mf_transition: bool = False
+    enable_lf_transition: bool = True
+    enable_mf_transition: bool = True
+    enable_hf_transition: bool = False
     use_downbeat_mapping: bool = False
     
     def validate(self):
@@ -95,6 +96,8 @@ class AudioConstants:
     LOW_FREQ_CUTOFF = 200.0
     MID_FREQ_LOW_CUTOFF = 200.0
     MID_FREQ_HIGH_CUTOFF = 2000.0
+    HIGH_FREQ_LOW_CUTOFF = 2000.0
+    HIGH_FREQ_HIGH_CUTOFF = 8000.0
     
     # Beat detection
     BEATS_PER_MEASURE = 4

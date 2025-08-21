@@ -37,7 +37,7 @@ class ArgumentParser:
         
         # Tempo strategies
         parser.add_argument('--tempo-strategy', choices=['sequential', 'uniform', 'match-track'],
-                           default='uniform', help='Tempo alignment strategy (default: uniform)')
+                           default='match-track', help='Tempo alignment strategy (default: match-track)')
         
         # Transition settings
         transition_group = parser.add_argument_group('Transition Settings')
@@ -59,12 +59,20 @@ class ArgumentParser:
         quality_group.add_argument('--eq-strength', type=float, default=0.5,
                                  help='EQ matching strength: 0.0-1.0 (default: 0.5)')
         
-        # Frequency transitions
+        # Frequency transitions (enabled by default)
         freq_group = parser.add_argument_group('Frequency Transitions')
+        freq_group.add_argument('--no-lf-transition', action='store_true',
+                              help='Disable low-frequency blending (enabled by default)')
+        freq_group.add_argument('--no-mf-transition', action='store_true',
+                              help='Disable mid-frequency blending (enabled by default)')
+        freq_group.add_argument('--no-hf-transition', action='store_true',
+                              help='Disable high-frequency blending (disabled by default)')
         freq_group.add_argument('--lf-transition', action='store_true',
-                              help='Enable low-frequency blending to prevent bass/kick clashing')
+                              help='Explicitly enable low-frequency blending (default: enabled)')
         freq_group.add_argument('--mf-transition', action='store_true',
-                              help='Enable mid-frequency blending for smoother melodic transitions')
+                              help='Explicitly enable mid-frequency blending (default: enabled)')
+        freq_group.add_argument('--hf-transition', action='store_true',
+                              help='Explicitly enable high-frequency blending (default: disabled)')
         
         # Advanced features
         advanced_group = parser.add_argument_group('Advanced Features')
@@ -104,8 +112,8 @@ Examples:
   # Harmonic mixing with preview
   python dj_mix_generator.py --reorder-by-key --transitions-only track1.wav track2.wav
   
-  # Advanced features
-  python dj_mix_generator.py --tempo-strategy=match-track --mf-transition track1.wav track2.wav
+  # Advanced features (all frequency transitions enabled by default)
+  python dj_mix_generator.py --tempo-strategy=match-track track1.wav track2.wav
   
   # Manual precision
   python dj_mix_generator.py --manual-downbeats --transition-downbeats track1.wav track2.wav
@@ -150,12 +158,27 @@ Examples:
         # Parse tempo strategy
         tempo_strategy = TempoStrategy(args.tempo_strategy)
         
-        # Create transition settings
+        # Create transition settings with default logic
+        # LF and MF transitions are enabled by default, HF is disabled by default
+        enable_lf = (not args.no_lf_transition) if hasattr(args, 'no_lf_transition') else True
+        enable_mf = (not args.no_mf_transition) if hasattr(args, 'no_mf_transition') else True  
+        # HF is disabled by default, only enabled by explicit --hf-transition flag
+        enable_hf = False
+        
+        # Override with explicit enable flags if provided
+        if hasattr(args, 'lf_transition') and args.lf_transition:
+            enable_lf = True
+        if hasattr(args, 'mf_transition') and args.mf_transition:
+            enable_mf = True
+        if hasattr(args, 'hf_transition') and args.hf_transition:
+            enable_hf = True
+        
         transition_settings = TransitionSettings(
             measures=args.transition_measures,
             seconds=args.transition_seconds,
-            enable_lf_transition=args.lf_transition,
-            enable_mf_transition=args.mf_transition,
+            enable_lf_transition=enable_lf,
+            enable_mf_transition=enable_mf,
+            enable_hf_transition=enable_hf,
             use_downbeat_mapping=args.transition_downbeats
         )
         
