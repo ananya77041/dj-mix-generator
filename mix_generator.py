@@ -1673,10 +1673,11 @@ class MixGenerator:
             # Generate the enhanced transition
             transition_audio, track2_audio, updated_track = self.create_transition(prev_track, next_track, transition_duration, stretch_track1=False)
             
-            # Create complete mix for extraction purposes
+            # Create complete mix for extraction purposes using the processed/stretched track audio
             transition_samples = len(transition_audio)
             pre_transition = prev_track.audio[:-transition_samples]
-            post_transition = track2_audio[transition_samples:]
+            # Use the updated_track.audio (which contains the processed/stretched track2 audio)
+            post_transition = updated_track.audio[transition_samples:]
             complete_mix = np.concatenate([pre_transition, transition_audio, post_transition])
             
             # Find the transition points for extraction
