@@ -1670,19 +1670,63 @@ class MixGenerator:
                 duration=current_track.duration
             )
             
-            # Generate the enhanced transition
-            transition_audio, track2_audio, updated_track = self.create_transition(prev_track, next_track, transition_duration, stretch_track1=False)
+            # Generate the complete mix using the same natural overlay approach as main mixing
+            # This ensures we get the actual overlaid audio that includes both tracks properly mixed
             
-            # Create complete mix for extraction purposes using the processed/stretched track audio
-            transition_samples = len(transition_audio)
-            pre_transition = prev_track.audio[:-transition_samples]
-            # Use the updated_track.audio (which contains the processed/stretched track2 audio)
-            post_transition = updated_track.audio[transition_samples:]
-            complete_mix = np.concatenate([pre_transition, transition_audio, post_transition])
+            # Start with the primary track audio
+            mix_audio = prev_track.audio.copy()
+            
+            # Stretch the secondary track to match target BPM (same as main mixing)
+            if self.tempo_strategy == "uniform":
+                stretched_track = self._stretch_track_to_bpm(next_track, self.target_bpm)
+            else:
+                stretched_track = next_track
+            
+            # Apply the same natural overlay approach as used in main mixing
+            transition_samples = int(transition_duration * current_sr)
+            
+            # Calculate transition boundaries (same logic as main mixing)
+            mix_length_before_transition = len(mix_audio)
+            transition_start_in_mix = max(0, mix_length_before_transition - transition_samples)
+            
+            # Extract overlapping segments
+            mix_before_transition = mix_audio[:transition_start_in_mix]
+            track1_overlap = mix_audio[transition_start_in_mix:]
+            track2_overlap = stretched_track.audio[:len(track1_overlap)]
+            
+            # Ensure both overlaps are the same length
+            min_overlap_length = min(len(track1_overlap), len(track2_overlap))
+            if min_overlap_length > 0:
+                track1_overlap = track1_overlap[:min_overlap_length]
+                track2_overlap = track2_overlap[:min_overlap_length]
+                
+                # Apply intelligent beat alignment (same as main mixing)
+                track1_overlap, track2_overlap = self._apply_intelligent_transition_alignment(
+                    track1_overlap, track2_overlap, prev_track, stretched_track,
+                    transition_start_in_mix, 0, transition_duration
+                )
+                
+                # Create crossfade of the overlapping segments (same as main mixing)
+                fade_samples = min(len(track1_overlap), len(track2_overlap))
+                fade_out = np.cos(np.linspace(0, np.pi/2, fade_samples))
+                fade_in = np.sin(np.linspace(0, np.pi/2, fade_samples))
+                
+                crossfaded_transition = track1_overlap * fade_out + track2_overlap * fade_in
+                
+                # Build the complete mix with the actual overlaid transition
+                track2_remainder = stretched_track.audio[len(track2_overlap):]
+                complete_mix = np.concatenate([
+                    mix_before_transition,     # Pre-transition from primary track
+                    crossfaded_transition,     # The actual overlaid transition  
+                    track2_remainder          # Post-transition from secondary track
+                ])
+            else:
+                # Fallback: just concatenate if no overlap possible
+                complete_mix = np.concatenate([mix_audio, stretched_track.audio])
             
             # Find the transition points for extraction
             track1_end_sample, track2_start_sample = self.beat_aligner.find_optimal_transition_points(
-                prev_track, updated_track, transition_duration
+                prev_track, stretched_track, transition_duration
             )
             
             # Extract transition section from the complete seamless mix with buffers
