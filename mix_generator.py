@@ -19,7 +19,7 @@ class MixGenerator:
     
     def __init__(self, tempo_strategy: str = "sequential", interactive_beats: bool = False, 
                  enable_eq_matching: bool = True, enable_volume_matching: bool = True, eq_strength: float = 0.5,
-                 enable_peak_alignment: bool = True, enable_tempo_correction: bool = True):
+                 enable_peak_alignment: bool = True, enable_tempo_correction: bool = True, enable_lf_transition: bool = False):
         self.beat_aligner = BeatAligner(interactive_beats=interactive_beats)
         self.tempo_strategy = tempo_strategy
         self.target_bpm = None  # Will be set based on strategy
@@ -31,6 +31,7 @@ class MixGenerator:
         self.eq_strength = eq_strength
         self.enable_peak_alignment = enable_peak_alignment
         self.enable_tempo_correction = enable_tempo_correction
+        self.enable_lf_transition = enable_lf_transition
     
     def measures_to_samples(self, measures: int, bpm: float, sr: int, beats_per_measure: int = 4) -> int:
         """Convert measures to audio samples based on BPM and sample rate"""
@@ -1239,6 +1240,84 @@ class MixGenerator:
             print(f"  Warning: Tempo ramping failed ({e}), using original audio")
             return track1_outro, track2_intro
     
+    def _apply_lf_transition(self, track1_outro: np.ndarray, track2_intro: np.ndarray, sr: int) -> Tuple[np.ndarray, np.ndarray]:
+        """
+        Apply low-frequency transition blending to prevent kick drum and bass clashing.
+        
+        Gradually blends low frequencies from 100% track1 at start to 100% track2 at end.
+        This prevents bass and kick drum conflicts during transitions.
+        
+        Args:
+            track1_outro: Audio segment from track1 (fading out)
+            track2_intro: Audio segment from track2 (fading in)
+            sr: Sample rate
+            
+        Returns:
+            Tuple of (track1_outro_processed, track2_intro_processed)
+        """
+        print(f"  Applying low-frequency transition blending...")
+        
+        try:
+            from scipy.signal import butter, filtfilt
+            
+            # Define frequency bands
+            # Low frequencies: 20-200 Hz (bass, kick drums)  
+            # High frequencies: 200+ Hz (everything else)
+            lf_cutoff = 200.0  # Hz
+            nyquist = sr / 2
+            
+            if lf_cutoff >= nyquist:
+                print(f"    Warning: LF cutoff ({lf_cutoff} Hz) >= Nyquist frequency ({nyquist} Hz), skipping LF blending")
+                return track1_outro, track2_intro
+            
+            # Create low-pass and high-pass filters
+            # Low-pass: keeps frequencies below cutoff
+            lp_b, lp_a = butter(4, lf_cutoff / nyquist, btype='low')
+            # High-pass: keeps frequencies above cutoff  
+            hp_b, hp_a = butter(4, lf_cutoff / nyquist, btype='high')
+            
+            n_samples = len(track1_outro)
+            
+            # Separate frequency bands for both tracks
+            track1_lf = filtfilt(lp_b, lp_a, track1_outro)  # Track1 low frequencies
+            track1_hf = filtfilt(hp_b, hp_a, track1_outro)  # Track1 high frequencies
+            
+            track2_lf = filtfilt(lp_b, lp_a, track2_intro)  # Track2 low frequencies  
+            track2_hf = filtfilt(hp_b, hp_a, track2_intro)  # Track2 high frequencies
+            
+            # Create blending curves for low frequencies
+            # At start: 100% track1 LF, 0% track2 LF
+            # At end: 0% track1 LF, 100% track2 LF
+            lf_blend_curve = np.linspace(0, 1, n_samples)  # 0->1 for track2 LF
+            lf_fade_curve = np.linspace(1, 0, n_samples)   # 1->0 for track1 LF
+            
+            # Blend low frequencies gradually
+            blended_lf = track1_lf * lf_fade_curve + track2_lf * lf_blend_curve
+            
+            # For high frequencies, use normal crossfade curves
+            hf_fade_out = np.cos(np.linspace(0, np.pi/2, n_samples))**2  # track1 HF fade out
+            hf_fade_in = np.sin(np.linspace(0, np.pi/2, n_samples))**2   # track2 HF fade in
+            
+            # Process track1: gradually reduce LF, normal HF fadeout
+            track1_lf_processed = track1_lf * lf_fade_curve
+            track1_hf_processed = track1_hf * hf_fade_out
+            track1_processed = track1_lf_processed + track1_hf_processed
+            
+            # Process track2: gradually increase LF, normal HF fadein  
+            track2_lf_processed = track2_lf * lf_blend_curve
+            track2_hf_processed = track2_hf * hf_fade_in
+            track2_processed = track2_lf_processed + track2_hf_processed
+            
+            print(f"    Low-frequency blending applied (cutoff: {lf_cutoff} Hz)")
+            return track1_processed, track2_processed
+            
+        except ImportError:
+            print(f"    Warning: scipy.signal not available, skipping LF blending")
+            return track1_outro, track2_intro
+        except Exception as e:
+            print(f"    Warning: LF blending failed ({e}), using original audio")
+            return track1_outro, track2_intro
+    
     def _create_enhanced_crossfade(self, track1: Track, track2: Track, transition_duration: float) -> Tuple[np.ndarray, np.ndarray, Track]:
         """
         Create enhanced crossfade with quality improvements while maintaining sample continuity.
@@ -1291,13 +1370,24 @@ class MixGenerator:
             track1_outro, track2_intro, track1, track2, outro_start, intro_start
         )
         
+        # Apply low-frequency transition if enabled
+        if self.enable_lf_transition:
+            track1_outro_enhanced, track2_intro_enhanced = self._apply_lf_transition(
+                track1_outro_enhanced, track2_intro_enhanced, track1.sr
+            )
+        
         # Create equal-power crossfade curves with enhanced audio
         fade_samples = min_length
         fade_out = np.cos(np.linspace(0, np.pi/2, fade_samples))
         fade_in = np.sin(np.linspace(0, np.pi/2, fade_samples))
         
         # Apply crossfade with enhanced audio
-        transition = track1_outro_enhanced * fade_out + track2_intro_enhanced * fade_in
+        if self.enable_lf_transition:
+            # For LF transition, the audio is already blended, just sum them
+            transition = track1_outro_enhanced + track2_intro_enhanced
+        else:
+            # Normal crossfade
+            transition = track1_outro_enhanced * fade_out + track2_intro_enhanced * fade_in
         
         # Final output normalization to prevent clipping
         final_peak = np.max(np.abs(transition))
@@ -1671,7 +1761,16 @@ class MixGenerator:
                 track1_overlap = track1_overlap[:fade_samples]
                 track2_overlap = track2_overlap[:fade_samples]
                 
-                crossfaded_overlap = track1_overlap * fade_out + track2_overlap * fade_in
+                # Apply low-frequency transition if enabled
+                if self.enable_lf_transition:
+                    track1_overlap, track2_overlap = self._apply_lf_transition(
+                        track1_overlap, track2_overlap, current_sr
+                    )
+                    # For LF transition, the audio is already blended
+                    crossfaded_overlap = track1_overlap + track2_overlap
+                else:
+                    # Normal crossfade
+                    crossfaded_overlap = track1_overlap * fade_out + track2_overlap * fade_in
                 
                 # CRITICAL FIX: Get ALL of track2 after the crossfade region
                 # The crossfade uses track2_start_in_track as the start point and min_overlap_length as duration

@@ -117,7 +117,19 @@ python dj_mix_generator.py track1.wav track2.wav track3.wav
 python dj_mix_generator.py --no-peak-alignment track1.wav track2.wav track3.wav
 ```
 
-Features: RMS volume normalization, 3-band EQ matching, and micro peak-to-beat alignment for professional results.
+Features: RMS volume normalization, 3-band EQ matching, micro peak-to-beat alignment, and low-frequency blending for professional results.
+
+### Low-Frequency Transition
+
+```bash
+# Enable low-frequency blending to prevent bass/kick clashing
+python dj_mix_generator.py --lf-transition track1.wav track2.wav track3.wav
+
+# Combine with other features
+python dj_mix_generator.py --tempo-strategy=match-track --lf-transition track1.wav track2.wav track3.wav
+```
+
+Prevents kick drum and bass clashing by gradually blending low frequencies (20-200 Hz) from 100% track1 to 100% track2 during transitions while maintaining normal crossfading for higher frequencies.
 
 ### Tempo Strategies
 

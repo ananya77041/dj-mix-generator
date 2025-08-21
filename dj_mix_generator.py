@@ -16,10 +16,10 @@ from models import Track
 class DJMixGenerator:
     """Main DJ Mix Generator class that coordinates audio analysis and mix generation"""
     
-    def __init__(self, use_cache: bool = True, manual_downbeats: bool = False, allow_irregular_tempo: bool = False, tempo_strategy: str = "uniform", interactive_beats: bool = False, enable_eq_matching: bool = False, enable_volume_matching: bool = False, enable_peak_alignment: bool = True, eq_strength: float = 0.1, enable_tempo_correction: bool = False):
+    def __init__(self, use_cache: bool = True, manual_downbeats: bool = False, allow_irregular_tempo: bool = False, tempo_strategy: str = "uniform", interactive_beats: bool = False, enable_eq_matching: bool = False, enable_volume_matching: bool = False, enable_peak_alignment: bool = True, eq_strength: float = 0.1, enable_tempo_correction: bool = False, enable_lf_transition: bool = False):
         self.tracks: List[Track] = []
         self.analyzer = AudioAnalyzer(use_cache=use_cache, manual_downbeats=manual_downbeats, allow_irregular_tempo=allow_irregular_tempo)
-        self.mixer = MixGenerator(tempo_strategy=tempo_strategy, interactive_beats=interactive_beats, enable_eq_matching=enable_eq_matching, enable_volume_matching=enable_volume_matching, enable_peak_alignment=enable_peak_alignment, eq_strength=eq_strength, enable_tempo_correction=enable_tempo_correction)
+        self.mixer = MixGenerator(tempo_strategy=tempo_strategy, interactive_beats=interactive_beats, enable_eq_matching=enable_eq_matching, enable_volume_matching=enable_volume_matching, enable_peak_alignment=enable_peak_alignment, eq_strength=eq_strength, enable_tempo_correction=enable_tempo_correction, enable_lf_transition=enable_lf_transition)
         self.key_matcher = KeyMatcher()
         self.tempo_strategy = tempo_strategy
         self.interactive_beats = interactive_beats
@@ -147,6 +147,7 @@ def main():
         print("  --no-peak-alignment    Disable micro peak-to-beat alignment (faster processing)")
         print("  --no-tempo-correction  Disable piecewise tempo correction for drift elimination")
         print("  --eq-strength=N        EQ matching strength: 0.0-1.0 (default: 0.5, 0=off)")
+        print("  --lf-transition        Enable low-frequency blending to prevent bass/kick clashing")
         print("  --no-cache             Disable track analysis caching")
         print("  --cache-info           Show cache information and exit")
         print("  --clear-cache          Clear track analysis cache and exit")
@@ -167,6 +168,7 @@ def main():
     enable_volume_matching = False
     enable_peak_alignment = True
     enable_tempo_correction = True
+    enable_lf_transition = False
     eq_strength = 0.5
     playlist = []
     output_path = "dj_mix.wav"
@@ -242,6 +244,10 @@ def main():
             enable_tempo_correction = False
             args.remove("--no-tempo-correction")
         
+        if "--lf-transition" in args:
+            enable_lf_transition = True
+            args.remove("--lf-transition")
+        
         # Check for EQ strength setting
         eq_strength_args = [arg for arg in args if arg.startswith("--eq-strength=")]
         if eq_strength_args:
@@ -300,7 +306,7 @@ def main():
             return 1
     
     try:
-        dj = DJMixGenerator(use_cache=use_cache, manual_downbeats=manual_downbeats, allow_irregular_tempo=allow_irregular_tempo, tempo_strategy=tempo_strategy, interactive_beats=interactive_beats, enable_eq_matching=enable_eq_matching, enable_volume_matching=enable_volume_matching, enable_peak_alignment=enable_peak_alignment, eq_strength=eq_strength, enable_tempo_correction=enable_tempo_correction)
+        dj = DJMixGenerator(use_cache=use_cache, manual_downbeats=manual_downbeats, allow_irregular_tempo=allow_irregular_tempo, tempo_strategy=tempo_strategy, interactive_beats=interactive_beats, enable_eq_matching=enable_eq_matching, enable_volume_matching=enable_volume_matching, enable_peak_alignment=enable_peak_alignment, eq_strength=eq_strength, enable_tempo_correction=enable_tempo_correction, enable_lf_transition=enable_lf_transition)
         dj.load_playlist(playlist)
         
         # Optionally reorder by key
