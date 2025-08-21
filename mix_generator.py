@@ -61,6 +61,82 @@ class MixGenerator:
             print(f"  Individual BPMs: {', '.join(bpm_list)}")
         else:
             raise ValueError(f"Unknown tempo strategy: {self.tempo_strategy}")
+    
+    def _apply_tempo_ramp_to_transition(self, track1_overlap: np.ndarray, track2_overlap: np.ndarray, 
+                                      tempo_ramp_data: dict, sr: int) -> Tuple[np.ndarray, np.ndarray]:
+        """
+        Apply gradual tempo ramping during the transition period
+        Gradually increases tempo from start_bpm to end_bpm throughout the transition
+        """
+        try:
+            start_bpm = tempo_ramp_data['start_bpm']
+            end_bpm = tempo_ramp_data['end_bpm']
+            
+            transition_samples = min(len(track1_overlap), len(track2_overlap))
+            
+            # Create tempo ramp curve (linear interpolation from start to end BPM)
+            tempo_curve = np.linspace(start_bpm, end_bpm, transition_samples)
+            
+            print(f"    Ramping from {start_bpm:.1f} to {end_bpm:.1f} BPM over {transition_samples/sr:.1f}s")
+            
+            # Apply time-stretching with varying tempo throughout the transition
+            # We'll process the transition in small chunks with different stretch ratios
+            chunk_size = max(1024, transition_samples // 50)  # ~50 chunks for smooth ramping
+            
+            ramped_track1 = []
+            ramped_track2 = []
+            
+            for start_idx in range(0, transition_samples, chunk_size):
+                end_idx = min(start_idx + chunk_size, transition_samples)
+                chunk_length = end_idx - start_idx
+                
+                if chunk_length == 0:
+                    break
+                
+                # Get the target tempo for this chunk (middle of chunk)
+                mid_idx = start_idx + chunk_length // 2
+                target_tempo = tempo_curve[mid_idx]
+                
+                # Calculate stretch ratio relative to original tempo
+                stretch_ratio_track1 = start_bpm / target_tempo
+                stretch_ratio_track2 = start_bpm / target_tempo  # Both start from same base
+                
+                # Extract chunks
+                track1_chunk = track1_overlap[start_idx:end_idx]
+                track2_chunk = track2_overlap[start_idx:end_idx]
+                
+                # Apply time-stretching to chunks
+                if abs(stretch_ratio_track1 - 1.0) > 0.01:  # Only stretch if meaningful difference
+                    track1_chunk = librosa.effects.time_stretch(track1_chunk, rate=stretch_ratio_track1)
+                if abs(stretch_ratio_track2 - 1.0) > 0.01:
+                    track2_chunk = librosa.effects.time_stretch(track2_chunk, rate=stretch_ratio_track2)
+                
+                # Ensure chunks maintain original length (pad/trim if needed)
+                if len(track1_chunk) != chunk_length:
+                    if len(track1_chunk) > chunk_length:
+                        track1_chunk = track1_chunk[:chunk_length]
+                    else:
+                        track1_chunk = np.pad(track1_chunk, (0, chunk_length - len(track1_chunk)), 'constant')
+                
+                if len(track2_chunk) != chunk_length:
+                    if len(track2_chunk) > chunk_length:
+                        track2_chunk = track2_chunk[:chunk_length]
+                    else:
+                        track2_chunk = np.pad(track2_chunk, (0, chunk_length - len(track2_chunk)), 'constant')
+                
+                ramped_track1.append(track1_chunk)
+                ramped_track2.append(track2_chunk)
+            
+            # Concatenate all ramped chunks
+            ramped_track1 = np.concatenate(ramped_track1) if ramped_track1 else track1_overlap
+            ramped_track2 = np.concatenate(ramped_track2) if ramped_track2 else track2_overlap
+            
+            print(f"    ✅ Tempo ramp applied: {len(ramped_track1)} samples")
+            return ramped_track1, ramped_track2
+            
+        except Exception as e:
+            print(f"    ⚠️ Tempo ramp failed, using original audio: {e}")
+            return track1_overlap, track2_overlap
         
     def create_transition(self, track1: Track, track2: Track, transition_duration: float = 30.0, 
                          stretch_track1: bool = False) -> Tuple[np.ndarray, np.ndarray, Track]:
@@ -1310,16 +1386,42 @@ class MixGenerator:
                                                      target_sr=current_sr)
                 current_track.sr = current_sr
             
-            # SIMPLE NATURAL DJ MIXING: Just stretch the track to match tempo and overlay
+            # DYNAMIC TEMPO RAMPING: Check if we need to increase mix tempo
             actual_prev_track = processed_tracks[i-1]  # The processed previous track
+            
+            # Check BPM difference before stretching for tempo ramping
+            prev_original_bpm = tracks[i-1].bpm  # Original BPM of previous track
+            current_original_bpm = current_track.bpm  # Original BPM of current track
+            bpm_difference = abs(current_original_bpm - prev_original_bpm)
+            
+            tempo_ramp_needed = bpm_difference > 5.0
+            if tempo_ramp_needed:
+                # Calculate new target BPM as average of the two involved tracks
+                new_target_bpm = (prev_original_bpm + current_original_bpm) / 2
+                print(f"  🎵 TEMPO RAMP: {prev_original_bpm:.1f} + {current_original_bpm:.1f} BPM difference = {bpm_difference:.1f}")
+                print(f"  📈 Ramping mix tempo to average: {new_target_bpm:.1f} BPM (from transition onwards)")
+                
+                # Update target BPM for future tracks
+                if self.tempo_strategy == "uniform":
+                    self.target_bpm = new_target_bpm
+                
+                # We'll implement the gradual tempo change in the transition
+                tempo_ramp_data = {
+                    'start_bpm': prev_original_bpm,  # Use original BPMs for proper ramping
+                    'end_bpm': new_target_bpm,      # Target is the average of original BPMs
+                    'ramp_needed': True
+                }
+            else:
+                tempo_ramp_data = {'ramp_needed': False}
             
             # Stretch the current track to match the target BPM
             if self.tempo_strategy == "sequential":
                 # Sequential: stretch current track to match previous track's BPM
-                target_bpm_for_current = actual_prev_track.bpm
+                # (or new ramped BPM if ramping)
+                target_bpm_for_current = new_target_bpm if tempo_ramp_needed else actual_prev_track.bpm
                 stretched_track = self._stretch_track_to_bpm(current_track, target_bpm_for_current)
             elif self.tempo_strategy == "uniform":
-                # Uniform: stretch current track to target BPM
+                # Uniform: stretch current track to target BPM (potentially updated)
                 stretched_track = self._stretch_track_to_bpm(current_track, self.target_bpm)
             
             # Store the stretched track for future transitions
@@ -1360,10 +1462,21 @@ class MixGenerator:
                 track1_overlap = track1_overlap[:min_overlap_length]
                 track2_overlap = track2_overlap[:min_overlap_length]
                 
+                # Apply tempo ramping during transition if needed
+                if tempo_ramp_data['ramp_needed']:
+                    print(f"  🎶 Applying gradual tempo ramp during transition")
+                    track1_overlap, track2_overlap = self._apply_tempo_ramp_to_transition(
+                        track1_overlap, track2_overlap, tempo_ramp_data, current_sr
+                    )
+                
                 # Create crossfade of the overlapping segments
-                fade_samples = min_overlap_length
+                fade_samples = min(len(track1_overlap), len(track2_overlap))
                 fade_out = np.cos(np.linspace(0, np.pi/2, fade_samples))
                 fade_in = np.sin(np.linspace(0, np.pi/2, fade_samples))
+                
+                # Ensure both are same length after tempo ramping
+                track1_overlap = track1_overlap[:fade_samples]
+                track2_overlap = track2_overlap[:fade_samples]
                 
                 crossfaded_overlap = track1_overlap * fade_out + track2_overlap * fade_in
                 
