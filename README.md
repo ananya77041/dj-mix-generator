@@ -75,6 +75,17 @@ python dj_mix_generator.py --manual-downbeats track1.wav track2.wav track3.wav
 
 Interactive GUI for precise first downbeat selection with beat snapping and visual feedback.
 
+### Transition Downbeat Mapping
+
+```bash
+python dj_mix_generator.py --transition-downbeats track1.wav track2.wav track3.wav
+
+# Combine with other features for ultimate precision
+python dj_mix_generator.py --tempo-strategy=match-track --transition-downbeats --mf-transition track1.wav track2.wav track3.wav
+```
+
+Interactive GUI for precise downbeat selection within transition segments. The 2-step process allows you to select the optimal downbeat for each track's transition portion, enabling perfect alignment without changing track tempos.
+
 ### Interactive Beatgrid Alignment
 
 ```bash
@@ -130,6 +141,18 @@ python dj_mix_generator.py --tempo-strategy=match-track --lf-transition track1.w
 ```
 
 Prevents kick drum and bass clashing by gradually blending low frequencies (20-200 Hz) from 100% track1 to 100% track2 during transitions while maintaining normal crossfading for higher frequencies.
+
+### Mid-Frequency Transition
+
+```bash
+# Enable mid-frequency blending for smoother melodic transitions
+python dj_mix_generator.py --mf-transition track1.wav track2.wav track3.wav
+
+# Combine with tempo strategies for optimal results
+python dj_mix_generator.py --tempo-strategy=uniform --mf-transition track1.wav track2.wav track3.wav
+```
+
+Creates smoother transitions for melodic and harmonic content by gradually blending mid frequencies (200-2000 Hz) from 100% track1 to 100% track2 during transitions. This frequency range includes vocals, melody lines, and harmonic instruments, resulting in more musical transitions while preserving normal crossfading for bass and treble.
 
 ### Tempo Strategies
 

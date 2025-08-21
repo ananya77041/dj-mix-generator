@@ -12,7 +12,16 @@ import numpy as np
 from pathlib import Path
 from typing import Dict, Optional, Any
 from dataclasses import asdict
-from models import Track
+try:
+    from ..core.models import Track, BeatInfo, KeyInfo
+except ImportError:
+    # Fallback for direct execution - use full path to avoid conflicts
+    import sys
+    from pathlib import Path
+    src_path = Path(__file__).parent.parent
+    if str(src_path) not in sys.path:
+        sys.path.insert(0, str(src_path))
+    from core.models import Track, BeatInfo, KeyInfo
 
 
 class TrackCache:
@@ -114,23 +123,29 @@ class TrackCache:
             return None
     
     def _serialize_numpy_arrays(self, data: Dict[str, Any]) -> Dict[str, Any]:
-        """Convert numpy arrays to lists for JSON serialization"""
+        """Convert numpy arrays to lists for JSON serialization, including nested dicts"""
         serialized = {}
         for key, value in data.items():
             if isinstance(value, np.ndarray):
                 serialized[key] = value.tolist()
+            elif isinstance(value, dict):
+                # Recursively handle nested dictionaries (like BeatInfo and KeyInfo)
+                serialized[key] = self._serialize_numpy_arrays(value)
             else:
                 serialized[key] = value
         return serialized
     
     def _deserialize_numpy_arrays(self, data: Dict[str, Any]) -> Dict[str, Any]:
-        """Convert lists back to numpy arrays"""
+        """Convert lists back to numpy arrays, including nested dicts"""
         deserialized = {}
         array_fields = ['beats', 'downbeats']  # Fields that should be numpy arrays
         
         for key, value in data.items():
             if key in array_fields and isinstance(value, list):
                 deserialized[key] = np.array(value)
+            elif isinstance(value, dict):
+                # Recursively handle nested dictionaries
+                deserialized[key] = self._deserialize_numpy_arrays(value)
             else:
                 deserialized[key] = value
         return deserialized
@@ -172,8 +187,58 @@ class TrackCache:
             # Deserialize numpy arrays
             cached_data = self._deserialize_numpy_arrays(cached_data)
             
-            # Create Track object
-            track = Track(**cached_data)
+            # Handle new Track model structure with nested objects
+            if 'beat_info' in cached_data and 'key_info' in cached_data:
+                # New format with nested objects - validate structure
+                if (isinstance(cached_data['beat_info'], dict) and 
+                    isinstance(cached_data['key_info'], dict) and
+                    'beats' in cached_data['beat_info'] and
+                    'downbeats' in cached_data['beat_info']):
+                    
+                    # Convert dict back to BeatInfo/KeyInfo objects
+                    beat_info = BeatInfo(**cached_data['beat_info'])
+                    key_info = KeyInfo(**cached_data['key_info'])
+                    
+                    # Create track with proper objects
+                    track = Track(
+                        filepath=cached_data['filepath'],
+                        audio=cached_data['audio'],
+                        sr=cached_data['sr'],
+                        beat_info=beat_info,
+                        key_info=key_info,
+                        metadata=cached_data.get('metadata', {})
+                    )
+                else:
+                    # Invalid new format - remove and return None
+                    print(f"Warning: Invalid new format cache entry for {filepath}, removing")
+                    self._remove_cache_entry(cache_key)
+                    return None
+            else:
+                # Legacy format - check if it has the required fields
+                if not all(key in cached_data for key in ['beats', 'downbeats', 'bpm', 'sr']):
+                    print(f"Warning: Incomplete legacy cache entry for {filepath}, removing")
+                    self._remove_cache_entry(cache_key)
+                    return None
+                
+                # Convert legacy format to new structure
+                beat_info = BeatInfo(
+                    beats=cached_data.get('beats', np.array([])),
+                    downbeats=cached_data.get('downbeats', np.array([])),
+                    bpm=cached_data.get('bpm', 120.0),
+                    confidence=0.8
+                )
+                key_info = KeyInfo(
+                    key=cached_data.get('key', 'Unknown'),
+                    confidence=0.7
+                )
+                track = Track(
+                    filepath=Path(cached_data['filepath']),
+                    audio=audio_data['audio'],
+                    sr=cached_data['sr'],
+                    beat_info=beat_info,
+                    key_info=key_info,
+                    metadata=cached_data.get('metadata', {})
+                )
             
             return track
             

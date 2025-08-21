@@ -6,7 +6,16 @@ Beat alignment utilities for precise DJ mixing
 import numpy as np
 import librosa
 from typing import Tuple, List
-from models import Track
+try:
+    from .models import Track
+except ImportError:
+    # Fallback for direct execution - use full path to avoid conflicts
+    import sys
+    from pathlib import Path
+    src_path = Path(__file__).parent.parent
+    if str(src_path) not in sys.path:
+        sys.path.insert(0, str(src_path))
+    from core.models import Track
 
 
 class BeatAligner:
@@ -230,7 +239,10 @@ class BeatAligner:
                                    transition_duration: float) -> Tuple[np.ndarray, np.ndarray]:
         """Apply interactive beatgrid alignment using GUI"""
         try:
-            from beatgrid_gui import align_beatgrids_interactive
+            try:
+                from ..gui.beatgrid.simple_gui import align_beatgrids_interactive
+            except ImportError:
+                from gui.beatgrid.simple_gui import align_beatgrids_interactive
             
             print("  Opening interactive beatgrid alignment...")
             print(f"  Track 1 BPM: {track1.bpm:.1f}")

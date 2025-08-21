@@ -7,9 +7,20 @@ import librosa
 import numpy as np
 import os
 from pathlib import Path
-from models import Track
 from scipy.signal import find_peaks
-from track_cache import TrackCache
+
+try:
+    from .models import Track, BeatInfo, KeyInfo
+    from ..utils.cache import TrackCache
+except ImportError:
+    # Fallback for direct execution - use full path to avoid conflicts
+    import sys
+    from pathlib import Path
+    src_path = Path(__file__).parent.parent
+    if str(src_path) not in sys.path:
+        sys.path.insert(0, str(src_path))
+    from core.models import Track, BeatInfo, KeyInfo
+    from utils.cache import TrackCache
 
 
 class AudioAnalyzer:
@@ -59,15 +70,25 @@ class AudioAnalyzer:
             chroma = librosa.feature.chroma_stft(y=audio, sr=sr)
             key = self._estimate_key(chroma)
             
+            # Create BeatInfo and KeyInfo objects for the enhanced Track model
+            beat_info = BeatInfo(
+                beats=beats,
+                downbeats=downbeats,
+                bpm=bpm,
+                confidence=0.8  # Default confidence
+            )
+            
+            key_info = KeyInfo(
+                key=key,
+                confidence=0.7  # Default confidence
+            )
+            
             track = Track(
                 filepath=Path(filepath),
                 audio=audio,
                 sr=sr,
-                bpm=bpm,
-                key=key,
-                beats=beats,
-                downbeats=downbeats,
-                duration=duration
+                beat_info=beat_info,
+                key_info=key_info
             )
             
             # Cache the results - only cache as manual if it was actually manually selected
@@ -290,7 +311,10 @@ class AudioAnalyzer:
         Returns (downbeats, was_manually_selected, final_bpm)
         """
         try:
-            from downbeat_gui import select_first_downbeat
+            try:
+                from ..gui.downbeat_gui import select_first_downbeat
+            except ImportError:
+                from gui.downbeat_gui import select_first_downbeat
             
             # Show GUI for manual selection
             result = select_first_downbeat(audio, sr, track_name, beats, detected_bpm, self.allow_irregular_tempo)
