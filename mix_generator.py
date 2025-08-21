@@ -1620,16 +1620,23 @@ class MixGenerator:
     
     def _generate_transitions_only(self, tracks: List[Track], output_path: str, transition_duration: float, transition_measures: int = None):
         """
-        Generate only the transition sections with 5-second buffers for preview testing
-        Each transition includes 5s from end of current track + transition + 5s from start of next track
+        Generate only the transition sections with 2-measure buffers for preview testing
+        Each transition includes 2 measures from end of primary track + transition + 2 measures from start of secondary track
         """
         print("Creating transitions-only preview for testing...")
         if transition_measures is not None:
             print(f"Each transition: {transition_measures} measures ({transition_duration:.1f}s at {self.target_bpm:.1f} BPM)")
         
         current_sr = tracks[0].sr
-        buffer_duration = 5.0  # 5 seconds before/after each transition
+        
+        # Calculate 2 measures duration in seconds based on target BPM
+        # 2 measures = 8 beats (assuming 4/4 time signature)
+        beats_per_minute = self.target_bpm
+        beats_per_second = beats_per_minute / 60.0
+        buffer_duration = 8 / beats_per_second  # 8 beats = 2 measures
         buffer_samples = int(buffer_duration * current_sr)
+        
+        print(f"Using 2-measure buffers ({buffer_duration:.1f}s at {self.target_bpm:.1f} BPM)")
         
         all_transitions = []
         silence_gap = np.zeros(int(1.0 * current_sr))  # 1 second gap between transitions
@@ -1686,7 +1693,7 @@ class MixGenerator:
             transition_start_in_mix = max(0, track1_end_sample - transition_samples)
             transition_end_in_mix = transition_start_in_mix + transition_samples
             
-            # Extract with 5s buffers
+            # Extract with 2-measure buffers  
             extract_start = max(0, transition_start_in_mix - buffer_samples)
             extract_end = min(len(complete_mix), transition_end_in_mix + buffer_samples)
             
@@ -1696,7 +1703,7 @@ class MixGenerator:
                 all_transitions.append(transition_segment)
                 
                 segment_duration = len(transition_segment) / current_sr
-                print(f"  Transition segment: {segment_duration:.1f}s (seamless with 5s buffers)")
+                print(f"  Transition segment: {segment_duration:.1f}s (with 2-measure buffers: {buffer_duration:.1f}s before/after)")
             else:
                 print(f"  Warning: Could not extract transition segment")
         
@@ -1720,8 +1727,9 @@ class MixGenerator:
         
         duration_minutes = len(final_mix) / current_sr / 60
         print(f"\n🎵 Transitions preview complete!")
-        print(f"Contains {len(all_transitions)} transitions")
+        print(f"Contains {len(all_transitions)} transitions with 2-measure buffers")
         print(f"Duration: {duration_minutes:.1f} minutes")
         print(f"Sample rate: {current_sr} Hz")
         print(f"File size: {os.path.getsize(output_path) / (1024*1024):.1f} MB")
+        print(f"Each transition includes 2 measures before (primary track) + transition + 2 measures after (secondary track)")
         print("Listen to this file to test transition quality before generating full mix!")
