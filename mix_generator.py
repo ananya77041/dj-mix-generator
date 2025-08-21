@@ -59,6 +59,12 @@ class MixGenerator:
             print(f"Uniform tempo strategy: Target BPM = {self.target_bpm:.1f} (average of all tracks)")
             bpm_list = [f"{track.bpm:.1f}" for track in tracks]
             print(f"  Individual BPMs: {', '.join(bpm_list)}")
+        elif self.tempo_strategy == "match-track":
+            # Match-track: each track plays at native tempo, tempo ramps during transitions
+            self.target_bpm = None  # No single target BPM, varies per track
+            print(f"Match-track tempo strategy: Each track plays at native BPM with tempo ramping during transitions")
+            bpm_list = [f"{track.bpm:.1f}" for track in tracks]
+            print(f"  Track BPMs: {', '.join(bpm_list)}")
         else:
             raise ValueError(f"Unknown tempo strategy: {self.tempo_strategy}")
     
@@ -211,7 +217,7 @@ class MixGenerator:
     def create_transition(self, track1: Track, track2: Track, transition_duration: float = 30.0, 
                          stretch_track1: bool = False) -> Tuple[np.ndarray, np.ndarray, Track]:
         """Create a beat-aligned crossfade transition between two tracks"""
-        if self.target_bpm is None:
+        if self.target_bpm is None and self.tempo_strategy != "match-track":
             raise ValueError("Target BPM not set. Call calculate_target_bpm() first.")
         
         # Determine what needs to be stretched based on tempo strategy
@@ -234,6 +240,12 @@ class MixGenerator:
                 track1_stretched = track1
                 
             track2_stretched = self._stretch_track_to_bpm(track2, self.target_bpm)
+            
+        elif self.tempo_strategy == "match-track":
+            # Match-track: both tracks play at native tempo, tempo ramps during transition
+            print(f"  Match-track mode: {track1.bpm:.1f} & {track2.bpm:.1f} (both at native tempo)")
+            track1_stretched = track1  # No change to track1 - stays at native tempo
+            track2_stretched = track2  # No change to track2 - stays at native tempo
         
         # CRITICAL FIX: Force both tracks to use the exact uniform target BPM for crossfading
         # The actual calculated BPMs may differ slightly due to discrete sample precision,
@@ -246,6 +258,10 @@ class MixGenerator:
         elif self.tempo_strategy == "uniform":
             target_bpm_for_crossfade = self.target_bpm  # Use the exact uniform target BPM
             print(f"  Uniform crossfade BPM: {target_bpm_for_crossfade:.3f} (target BPM)")
+        elif self.tempo_strategy == "match-track":
+            # For match-track, we'll use track1's BPM for crossfade reference, but tempo will ramp
+            target_bpm_for_crossfade = track1_stretched.bpm  # Use track1's native BPM as reference
+            print(f"  Match-track crossfade: Starts at {track1_stretched.bpm:.3f} BPM, ramps to {track2_stretched.bpm:.3f} BPM")
         
         # Show what BPMs were actually achieved after stretching
         track1_actual_bpm = track1_stretched.bpm
@@ -257,6 +273,8 @@ class MixGenerator:
             print(f"  Note: Track1 not stretched (first track in sequence), target BPM = {self.target_bpm:.3f}")
         elif self.tempo_strategy == "sequential":
             print(f"  Note: Sequential mode - Track1 at native BPM, Track2 stretched to match")
+        elif self.tempo_strategy == "match-track":
+            print(f"  Note: Match-track mode - Both tracks at native BPM, tempo ramps during transition")
         
         # Create corrected tracks with uniform BPM for crossfading
         track1_for_crossfade = Track(
@@ -1144,6 +1162,83 @@ class MixGenerator:
         
         return complete_mix, updated_track2
     
+    def _apply_tempo_ramping(self, track1_outro: np.ndarray, track2_intro: np.ndarray, 
+                           start_bpm: float, end_bpm: float, sr: int, transition_duration: float) -> Tuple[np.ndarray, np.ndarray]:
+        """
+        Apply tempo ramping during transition for match-track strategy.
+        
+        Args:
+            track1_outro: Audio segment from track1 (fading out)
+            track2_intro: Audio segment from track2 (fading in) 
+            start_bpm: BPM at start of transition (track1's tempo)
+            end_bpm: BPM at end of transition (track2's tempo)
+            sr: Sample rate
+            transition_duration: Duration of transition in seconds
+            
+        Returns:
+            Tuple of (track1_outro_ramped, track2_intro_ramped)
+        """
+        print(f"  Applying tempo ramping: {start_bpm:.1f} BPM -> {end_bpm:.1f} BPM over {transition_duration:.1f}s")
+        
+        # Calculate the tempo change factor
+        tempo_ratio = end_bpm / start_bpm
+        print(f"  Tempo ratio: {tempo_ratio:.3f}")
+        
+        # If tempos are very close, skip ramping to avoid unnecessary processing
+        if abs(tempo_ratio - 1.0) < 0.02:  # Less than 2% change
+            print(f"  Tempos are very close ({abs((tempo_ratio - 1.0) * 100):.1f}% difference), skipping tempo ramping")
+            return track1_outro, track2_intro
+            
+        # Create time-varying tempo ramp
+        n_samples = len(track1_outro)
+        sample_indices = np.arange(n_samples)
+        
+        # Linear tempo ramp from start_bpm to end_bpm
+        # For track1 (fading out): gradually speed up towards track2's tempo
+        # For track2 (fading in): gradually slow down from track2's native tempo to match the ramp
+        
+        # Create crossfade curves for blending
+        fade_out_curve = np.cos(np.linspace(0, np.pi/2, n_samples))**2  # track1 fade out
+        fade_in_curve = np.sin(np.linspace(0, np.pi/2, n_samples))**2   # track2 fade in
+        
+        # Apply gradual tempo adjustment
+        # For track1: slightly speed up over the transition (subtle)
+        track1_tempo_factor = 1.0 + (tempo_ratio - 1.0) * fade_in_curve * 0.5  # 50% of the tempo change
+        
+        # For track2: start closer to track1's tempo, gradually return to native
+        track2_tempo_factor = tempo_ratio - (tempo_ratio - 1.0) * fade_out_curve * 0.5  # Start adjusted, return to native
+        
+        # Apply time stretching with the varying tempo factors
+        try:
+            # Apply subtle tempo adjustment to track1 outro (speeds up slightly towards end)
+            if np.mean(track1_tempo_factor) != 1.0:
+                track1_ramped = librosa.effects.time_stretch(track1_outro, rate=np.mean(track1_tempo_factor))
+                # Ensure same length by truncating or padding
+                if len(track1_ramped) > len(track1_outro):
+                    track1_ramped = track1_ramped[:len(track1_outro)]
+                elif len(track1_ramped) < len(track1_outro):
+                    track1_ramped = np.pad(track1_ramped, (0, len(track1_outro) - len(track1_ramped)), 'constant')
+            else:
+                track1_ramped = track1_outro.copy()
+                
+            # Apply subtle tempo adjustment to track2 intro (starts slower, returns to native)
+            if np.mean(track2_tempo_factor) != 1.0:
+                track2_ramped = librosa.effects.time_stretch(track2_intro, rate=np.mean(track2_tempo_factor))
+                # Ensure same length by truncating or padding
+                if len(track2_ramped) > len(track2_intro):
+                    track2_ramped = track2_ramped[:len(track2_intro)]
+                elif len(track2_ramped) < len(track2_intro):
+                    track2_ramped = np.pad(track2_ramped, (0, len(track2_intro) - len(track2_ramped)), 'constant')
+            else:
+                track2_ramped = track2_intro.copy()
+                
+            print(f"  Tempo ramping applied successfully")
+            return track1_ramped, track2_ramped
+            
+        except Exception as e:
+            print(f"  Warning: Tempo ramping failed ({e}), using original audio")
+            return track1_outro, track2_intro
+    
     def _create_enhanced_crossfade(self, track1: Track, track2: Track, transition_duration: float) -> Tuple[np.ndarray, np.ndarray, Track]:
         """
         Create enhanced crossfade with quality improvements while maintaining sample continuity.
@@ -1181,6 +1276,12 @@ class MixGenerator:
         min_length = min(len(track1_outro), len(track2_intro))
         track1_outro = track1_outro[:min_length]
         track2_intro = track2_intro[:min_length]
+        
+        # Apply tempo ramping for match-track strategy
+        if self.tempo_strategy == "match-track":
+            track1_outro, track2_intro = self._apply_tempo_ramping(
+                track1_outro, track2_intro, track1.bpm, track2.bpm, track1.sr, transition_duration
+            )
         
         # Apply professional quality improvements to transition segments
         outro_start = max(0, track1_end_sample - len(track1_outro))
@@ -1398,23 +1499,35 @@ class MixGenerator:
         self.calculate_target_bpm(tracks)
         
         # Determine transition duration - convert measures to seconds if needed
+        # For match-track mode, use first track's BPM for calculations
+        bpm_for_calculation = self.target_bpm if self.target_bpm is not None else tracks[0].bpm
+        
         if transition_measures is not None:
             # Convert measures to seconds using target BPM
             beats_per_measure = 4
             total_beats = transition_measures * beats_per_measure
-            transition_duration = (total_beats * 60.0) / self.target_bpm
-            transition_mode = f"{transition_measures} measures ({transition_duration:.1f}s at {self.target_bpm:.1f} BPM)"
+            transition_duration = (total_beats * 60.0) / bpm_for_calculation
+            if self.tempo_strategy == "match-track":
+                transition_mode = f"{transition_measures} measures ({transition_duration:.1f}s at {bpm_for_calculation:.1f} BPM reference)"
+            else:
+                transition_mode = f"{transition_measures} measures ({transition_duration:.1f}s at {self.target_bpm:.1f} BPM)"
         elif transition_duration is not None:
             # Convert seconds to measures for display
-            beats = (transition_duration * self.target_bpm) / 60.0
+            beats = (transition_duration * bpm_for_calculation) / 60.0
             measures = beats / 4  # Assume 4/4 time
-            transition_mode = f"{transition_duration}s ({measures:.1f} measures at {self.target_bpm:.1f} BPM)"
+            if self.tempo_strategy == "match-track":
+                transition_mode = f"{transition_duration}s ({measures:.1f} measures at {bpm_for_calculation:.1f} BPM reference)"
+            else:
+                transition_mode = f"{transition_duration}s ({measures:.1f} measures at {self.target_bpm:.1f} BPM)"
         else:
             # Default fallback
             transition_duration = 30.0
-            beats = (transition_duration * self.target_bpm) / 60.0
+            beats = (transition_duration * bpm_for_calculation) / 60.0
             measures = beats / 4
-            transition_mode = f"{transition_duration}s ({measures:.1f} measures at {self.target_bpm:.1f} BPM)"
+            if self.tempo_strategy == "match-track":
+                transition_mode = f"{transition_duration}s ({measures:.1f} measures at {bpm_for_calculation:.1f} BPM reference)"
+            else:
+                transition_mode = f"{transition_duration}s ({measures:.1f} measures at {self.target_bpm:.1f} BPM)"
         
         if transitions_only:
             print("Generating transitions-only preview with 5s buffers...")
@@ -1493,6 +1606,9 @@ class MixGenerator:
             elif self.tempo_strategy == "uniform":
                 # Uniform: stretch current track to target BPM (potentially updated)
                 stretched_track = self._stretch_track_to_bpm(current_track, self.target_bpm)
+            elif self.tempo_strategy == "match-track":
+                # Match-track: keep current track at native tempo
+                stretched_track = current_track
             
             # Store the stretched track for future transitions
             processed_tracks.append(stretched_track)
@@ -1668,6 +1784,9 @@ class MixGenerator:
             stretched_track = self._stretch_track_to_bpm(current_track, target_bpm_for_current)
         elif self.tempo_strategy == "uniform":
             stretched_track = self._stretch_track_to_bpm(current_track, self.target_bpm)
+        elif self.tempo_strategy == "match-track":
+            # Match-track: keep current track at native tempo
+            stretched_track = current_track
         
         processed_tracks.append(stretched_track)
         

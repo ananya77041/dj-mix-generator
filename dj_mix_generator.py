@@ -138,7 +138,7 @@ def main():
         print("  --transitions-only     Generate only transition sections for testing (with 5s buffers)")
         print("  --manual-downbeats     Use visual interface to manually select downbeats and BPM")
         print("  --irregular-tempo      Allow non-integer BPM values (use with --manual-downbeats)")
-        print("  --tempo-strategy=MODE  Tempo alignment strategy: 'sequential' or 'uniform' (default: sequential)")
+        print("  --tempo-strategy=MODE  Tempo alignment strategy: 'sequential', 'uniform', or 'match-track' (default: sequential)")
         print("  --transition-measures=N Transition length in measures (default: 8, overrides seconds)")
         print("  --transition-seconds=N  Transition length in seconds (default: 30, used if measures not specified)")
         print("  --interactive-beats     Use interactive beatgrid alignment GUI for transitions")
@@ -261,8 +261,8 @@ def main():
         tempo_strategy_args = [arg for arg in args if arg.startswith("--tempo-strategy=")]
         if tempo_strategy_args:
             tempo_strategy = tempo_strategy_args[0].split("=", 1)[1].lower()
-            if tempo_strategy not in ["sequential", "uniform"]:
-                print(f"Error: Invalid tempo strategy '{tempo_strategy}'. Use 'sequential' or 'uniform'.")
+            if tempo_strategy not in ["sequential", "uniform", "match-track"]:
+                print(f"Error: Invalid tempo strategy '{tempo_strategy}'. Use 'sequential', 'uniform', or 'match-track'.")
                 return 1
             args.remove(tempo_strategy_args[0])
         
