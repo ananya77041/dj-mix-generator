@@ -78,6 +78,10 @@ class ArgumentParser:
         advanced_group = parser.add_argument_group('Advanced Features')
         advanced_group.add_argument('--reorder-by-key', action='store_true',
                                   help='Reorder tracks for optimal harmonic mixing')
+        advanced_group.add_argument('--bpm-sort', action='store_true',
+                                  help='Sort tracks by BPM only (ascending order)')
+        advanced_group.add_argument('--random-order', type=int, metavar='N',
+                                  help='Select N tracks at random and randomize order (overrides all other ordering)')
         advanced_group.add_argument('--transitions-only', action='store_true',
                                   help='Generate only transition sections for testing')
         advanced_group.add_argument('--manual-downbeats', action='store_true',
@@ -141,6 +145,10 @@ Examples:
         if args.transition_seconds is not None and args.transition_seconds < 1.0:
             raise ValueError("Transition seconds must be at least 1.0")
         
+        # Validate random order
+        if args.random_order is not None and args.random_order < 1:
+            raise ValueError("Random order must select at least 1 track")
+        
         # Note: Both frequency transitions can be enabled simultaneously
         
         # Validate tracks
@@ -201,6 +209,8 @@ Examples:
             transition_settings=transition_settings,
             audio_quality=audio_quality,
             reorder_by_key=args.reorder_by_key,
+            bpm_sort=args.bpm_sort,
+            random_order=args.random_order,
             interactive_beats=args.interactive_beats,
             manual_downbeats=args.manual_downbeats,
             allow_irregular_tempo=args.irregular_tempo,

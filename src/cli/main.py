@@ -10,6 +10,7 @@ from pathlib import Path
 from typing import List
 from concurrent.futures import ThreadPoolExecutor, as_completed
 import threading
+import random
 
 # Add src directory to path for imports
 src_path = Path(__file__).parent.parent
@@ -62,8 +63,17 @@ class DJMixGeneratorCLI:
             # Load and analyze tracks
             self._load_playlist(track_paths)
             
-            # Optionally reorder by key
-            if self.config.reorder_by_key:
+            # Apply track ordering (random order overrides all others)
+            if self.config.random_order is not None:
+                self._randomize_tracks()
+                # Apply additional sorting to the final selected tracks if requested
+                if self.config.bpm_sort:
+                    self._sort_by_bpm()
+                elif self.config.reorder_by_key:
+                    self._reorder_tracks_by_key()
+            elif self.config.bpm_sort:
+                self._sort_by_bpm()
+            elif self.config.reorder_by_key:
                 self._reorder_tracks_by_key()
             
             # Generate the mix
@@ -228,6 +238,61 @@ class DJMixGeneratorCLI:
             print(f"  [{i}] {track.filepath.name}: {track.bpm:.1f} BPM, {track.key}")
         print()
     
+    def _randomize_tracks(self):
+        """Randomly select and randomize track order"""
+        if len(self.tracks) <= 1:
+            print("Not enough tracks to randomize.\\n")
+            return
+        
+        num_tracks = self.config.random_order
+        total_tracks = len(self.tracks)
+        
+        if num_tracks >= total_tracks:
+            print(f"Requested {num_tracks} tracks, but only {total_tracks} available. Using all tracks.")
+            num_tracks = total_tracks
+        
+        print(f"Randomly selecting {num_tracks} tracks from {total_tracks} available...")
+        
+        # Show original order
+        print("Available tracks:")
+        for i, track in enumerate(self.tracks, 1):
+            print(f"  [{i}] {track.filepath.name}: {track.bpm:.1f} BPM, {track.key}")
+        
+        # Randomly select the specified number of tracks
+        selected_tracks = random.sample(self.tracks, num_tracks)
+        
+        # Randomize the order of selected tracks
+        random.shuffle(selected_tracks)
+        
+        # Update the track list
+        self.tracks = selected_tracks
+        
+        print(f"\\nSelected and randomized {len(self.tracks)} tracks:")
+        for i, track in enumerate(self.tracks, 1):
+            print(f"  [{i}] {track.filepath.name}: {track.bpm:.1f} BPM, {track.key}")
+        print()
+
+    def _sort_by_bpm(self):
+        """Sort tracks by BPM only (ascending order)"""
+        if len(self.tracks) <= 1:
+            print("Not enough tracks to sort by BPM.\\n")
+            return
+        
+        print("Sorting tracks by BPM...")
+        
+        # Show original order
+        print("Original order:")
+        for i, track in enumerate(self.tracks, 1):
+            print(f"  [{i}] {track.filepath.name}: {track.bpm:.1f} BPM, {track.key}")
+        
+        # Sort by BPM only (ascending)
+        self.tracks.sort(key=lambda track: track.bpm)
+        
+        print("\\nSorted by BPM (ascending):")
+        for i, track in enumerate(self.tracks, 1):
+            print(f"  [{i}] {track.filepath.name}: {track.bpm:.1f} BPM, {track.key}")
+        print()
+
     def _reorder_tracks_by_key(self):
         """Reorder tracks for optimal harmonic mixing"""
         if len(self.tracks) <= 1:

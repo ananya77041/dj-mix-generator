@@ -67,6 +67,8 @@ class MixConfiguration:
     
     # Advanced features
     reorder_by_key: bool = False
+    bpm_sort: bool = False
+    random_order: Optional[int] = None
     interactive_beats: bool = False
     manual_downbeats: bool = False
     allow_irregular_tempo: bool = False
