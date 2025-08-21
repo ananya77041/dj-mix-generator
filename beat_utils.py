@@ -379,14 +379,37 @@ class BeatAligner:
         Intelligently shift beats in both tracks to achieve perfect alignment while preserving 
         total transition length and maintaining continuity at both edges.
         
-        Strategy:
-        1. Calculate optimal target beat positions (compromise between both tracks)
-        2. Apply minimal stretching/shifting to both tracks to meet these targets
-        3. Preserve segment boundaries to maintain overall mix timing
-        4. Use piecewise processing to maintain musical integrity
+        Enhanced with artifact prevention and conservative adjustments.
         """
         try:
             print("      Calculating optimal beat alignment strategy...")
+            
+            # Check if alignment is really necessary
+            if len(track1_beats) == 0 and len(track2_beats) == 0:
+                print("      No beats detected, using original audio")
+                return track1_outro, track2_intro
+            
+            # Calculate alignment necessity - skip if tracks are already well aligned
+            if len(track1_beats) > 0 and len(track2_beats) > 0:
+                # Sample a few beat positions to check alignment
+                sample_size = min(3, len(track1_beats), len(track2_beats))
+                total_offset = 0
+                valid_comparisons = 0
+                
+                for i in range(sample_size):
+                    if i < len(track1_beats) and i < len(track2_beats):
+                        offset = abs(track1_beats[i] - track2_beats[i])
+                        if offset < sr * 0.5:  # Within 0.5 seconds
+                            total_offset += offset
+                            valid_comparisons += 1
+                
+                if valid_comparisons > 0:
+                    avg_offset = total_offset / valid_comparisons
+                    offset_ms = (avg_offset / sr) * 1000
+                    
+                    if offset_ms < 50:  # Less than 50ms average offset
+                        print(f"      Tracks already well-aligned ({offset_ms:.1f}ms avg offset), skipping beat shifting")
+                        return track1_outro, track2_intro
             
             # Find common beat grid by analyzing both tracks
             target_beats = self._calculate_optimal_beat_grid(
@@ -399,15 +422,23 @@ class BeatAligner:
             
             print(f"      Target beat grid: {len(target_beats)} beats")
             
-            # Apply intelligent beat shifting to track1 (minimal adjustments)
+            # Apply intelligent beat shifting with conservative approach
             track1_aligned = self._apply_intelligent_stretch(
                 track1_outro, track1_beats, target_beats, sr, "Track1"
             )
             
-            # Apply intelligent beat shifting to track2 (minimal adjustments)  
             track2_aligned = self._apply_intelligent_stretch(
                 track2_intro, track2_beats, target_beats, sr, "Track2"
             )
+            
+            # Quality check - if too much change, revert to original
+            track1_change = abs(len(track1_aligned) - len(track1_outro)) / len(track1_outro)
+            track2_change = abs(len(track2_aligned) - len(track2_intro)) / len(track2_intro)
+            
+            if track1_change > 0.02 or track2_change > 0.02:  # More than 2% length change
+                print(f"      Beat alignment caused excessive length change ({track1_change:.1%}, {track2_change:.1%})")
+                print("      Reverting to original audio for quality preservation")
+                return track1_outro, track2_intro
             
             # Ensure both tracks maintain exact original length (critical for mix continuity)
             track1_aligned = self._preserve_segment_length(track1_aligned, len(track1_outro))
@@ -509,73 +540,160 @@ class BeatAligner:
             return audio
     
     def _piecewise_intelligent_stretch(self, audio: np.ndarray, beat_pairs: List[Tuple[float, float]], sr: int) -> np.ndarray:
-        """Apply piecewise stretching with intelligent segment processing"""
+        """Apply piecewise stretching with smooth transitions and artifact prevention"""
         try:
+            # Use larger segments to reduce artifacts and improve quality
+            if len(beat_pairs) < 2:
+                print("          Insufficient beat pairs for smooth stretching, using original audio")
+                return audio
+            
+            # Group beat pairs to create larger segments (reduces artifacts)
+            segment_size = max(2, len(beat_pairs) // 8)  # Create ~8 segments max
+            grouped_pairs = []
+            
+            for i in range(0, len(beat_pairs), segment_size):
+                group = beat_pairs[i:i + segment_size]
+                if group:
+                    # Use first and last pair in group for segment boundaries
+                    start_pair = group[0]
+                    end_pair = group[-1]
+                    grouped_pairs.append((start_pair[0], start_pair[1], end_pair[0], end_pair[1]))
+            
             stretched_segments = []
+            overlap_samples = int(0.02 * sr)  # 20ms overlap for smooth transitions
             
-            # Process each segment between beat pairs
-            for i in range(len(beat_pairs)):
-                if i == 0:
-                    # First segment: from start to first beat
-                    segment_start = 0
-                    segment_end = int(beat_pairs[i][0])
-                    target_start = 0
-                    target_end = int(beat_pairs[i][1])
-                else:
-                    # Subsequent segments: from previous beat to current beat
-                    segment_start = int(beat_pairs[i-1][0])
-                    segment_end = int(beat_pairs[i][0])
-                    target_start = int(beat_pairs[i-1][1])
-                    target_end = int(beat_pairs[i][1])
+            # Process each grouped segment
+            for i, (seg_start_orig, seg_start_target, seg_end_orig, seg_end_target) in enumerate(grouped_pairs):
                 
-                # Extract segment
-                if segment_end > segment_start and segment_end <= len(audio):
-                    segment = audio[segment_start:segment_end]
-                    target_length = target_end - target_start
+                # Extract segment with overlap
+                segment_start = max(0, int(seg_start_orig) - (overlap_samples if i > 0 else 0))
+                segment_end = min(len(audio), int(seg_end_orig) + (overlap_samples if i < len(grouped_pairs)-1 else 0))
+                
+                if segment_end <= segment_start:
+                    continue
                     
-                    # Apply minimal stretching only if necessary
-                    if target_length > 0 and abs(len(segment) - target_length) > sr * 0.01:  # >10ms difference
-                        stretch_ratio = len(segment) / target_length
-                        if 0.95 <= stretch_ratio <= 1.05:  # Only minor adjustments
-                            stretched_segment = librosa.effects.time_stretch(segment, rate=stretch_ratio)
-                            # Ensure exact target length
-                            if len(stretched_segment) != target_length:
-                                if len(stretched_segment) > target_length:
-                                    stretched_segment = stretched_segment[:target_length]
-                                else:
-                                    padding = np.zeros(target_length - len(stretched_segment))
-                                    stretched_segment = np.concatenate([stretched_segment, padding])
-                        else:
-                            # Stretch ratio too extreme, use original segment with padding/cropping
-                            if len(segment) > target_length:
-                                stretched_segment = segment[:target_length]
+                segment = audio[segment_start:segment_end]
+                
+                # Calculate target length (with overlap compensation)
+                target_start = int(seg_start_target) - (overlap_samples if i > 0 else 0)
+                target_end = int(seg_end_target) + (overlap_samples if i < len(grouped_pairs)-1 else 0)
+                target_length = target_end - target_start
+                
+                if target_length <= 0:
+                    continue
+                
+                # Calculate stretch ratio with safety limits
+                stretch_ratio = len(segment) / target_length
+                
+                # Apply stretching with conservative limits to prevent artifacts
+                if 0.92 <= stretch_ratio <= 1.08 and abs(len(segment) - target_length) > sr * 0.025:  # >25ms difference
+                    # Use high-quality stretching for minimal artifacts
+                    try:
+                        stretched_segment = librosa.effects.time_stretch(
+                            segment, 
+                            rate=stretch_ratio,
+                            # Use higher hop length for better quality
+                            hop_length=max(512, len(segment) // 64)
+                        )
+                        
+                        # Fine-tune length with minimal padding/cropping
+                        length_diff = len(stretched_segment) - target_length
+                        if abs(length_diff) > 0:
+                            if length_diff > 0:
+                                # Crop from edges symmetrically to maintain phase
+                                crop_each_side = length_diff // 2
+                                stretched_segment = stretched_segment[crop_each_side:crop_each_side + target_length]
                             else:
-                                padding = np.zeros(target_length - len(segment))
-                                stretched_segment = np.concatenate([segment, padding])
-                    else:
-                        # No stretching needed, use original segment
+                                # Pad with fade-in/out silence
+                                padding_needed = -length_diff
+                                pad_each_side = padding_needed // 2
+                                left_pad = np.zeros(pad_each_side)
+                                right_pad = np.zeros(padding_needed - pad_each_side)
+                                stretched_segment = np.concatenate([left_pad, stretched_segment, right_pad])
+                                
+                    except Exception as stretch_error:
+                        print(f"          Stretch failed for segment {i}, using original: {stretch_error}")
                         stretched_segment = segment
-                    
-                    stretched_segments.append(stretched_segment)
+                        # Adjust to target length with less aggressive methods
+                        if len(segment) != target_length:
+                            if len(segment) > target_length:
+                                # Crop from center
+                                excess = len(segment) - target_length
+                                start_crop = excess // 2
+                                stretched_segment = segment[start_crop:start_crop + target_length]
+                            else:
+                                # Repeat end samples to extend
+                                needed = target_length - len(segment)
+                                if len(segment) > 0:
+                                    extension = np.tile(segment[-min(1024, len(segment)):], 
+                                                      (needed // min(1024, len(segment)) + 1))[:needed]
+                                    stretched_segment = np.concatenate([segment, extension])
+                                else:
+                                    stretched_segment = np.zeros(target_length)
+                else:
+                    # No stretching needed or ratio too extreme - use original with length adjustment
+                    stretched_segment = segment
+                    if len(segment) != target_length:
+                        if len(segment) > target_length:
+                            # Crop from center to preserve important content
+                            excess = len(segment) - target_length
+                            start_crop = excess // 2
+                            stretched_segment = segment[start_crop:start_crop + target_length]
+                        else:
+                            # Extend with fade-out of original content
+                            needed = target_length - len(segment)
+                            if len(segment) > 0:
+                                # Use last 10% of segment for extension
+                                extend_source = segment[int(len(segment) * 0.9):]
+                                extension = np.tile(extend_source, (needed // len(extend_source) + 1))[:needed]
+                                # Apply fade to extension to prevent clicks
+                                fade_length = min(len(extension), int(0.005 * sr))  # 5ms fade
+                                extension[:fade_length] *= np.linspace(0.8, 0.2, fade_length)
+                                stretched_segment = np.concatenate([segment, extension])
+                            else:
+                                stretched_segment = np.zeros(target_length)
+                
+                # Apply overlap-add for smooth transitions between segments
+                if i > 0 and len(stretched_segments) > 0 and overlap_samples > 0:
+                    # Cross-fade with previous segment
+                    prev_segment = stretched_segments[-1]
+                    if len(prev_segment) >= overlap_samples and len(stretched_segment) >= overlap_samples:
+                        # Extract overlapping regions
+                        prev_overlap = prev_segment[-overlap_samples:]
+                        curr_overlap = stretched_segment[:overlap_samples]
+                        
+                        # Create crossfade
+                        fade_out = np.linspace(1.0, 0.0, overlap_samples)
+                        fade_in = np.linspace(0.0, 1.0, overlap_samples)
+                        
+                        # Apply crossfade
+                        mixed_overlap = prev_overlap * fade_out + curr_overlap * fade_in
+                        
+                        # Update segments
+                        stretched_segments[-1] = prev_segment[:-overlap_samples]
+                        stretched_segment = np.concatenate([mixed_overlap, stretched_segment[overlap_samples:]])
+                
+                stretched_segments.append(stretched_segment)
             
-            # Handle final segment (from last beat to end)
+            # Handle final segment (from last beat to end) if needed
             if len(beat_pairs) > 0:
                 final_segment_start = int(beat_pairs[-1][0])
-                final_target_start = int(beat_pairs[-1][1])
-                
                 if final_segment_start < len(audio):
                     final_segment = audio[final_segment_start:]
-                    stretched_segments.append(final_segment)
+                    if len(final_segment) > 0:
+                        stretched_segments.append(final_segment)
             
             # Concatenate all segments
             if stretched_segments:
                 result = np.concatenate(stretched_segments)
+                print(f"          Smooth piecewise stretch complete: {len(audio)} -> {len(result)} samples")
                 return result
             else:
                 return audio
                 
         except Exception as e:
-            print(f"          Warning: Piecewise stretch failed: {e}")
+            print(f"          Warning: Smooth piecewise stretch failed: {e}")
+            print(f"          Falling back to original audio")
             return audio
     
     def _preserve_segment_length(self, audio: np.ndarray, target_length: int) -> np.ndarray:
