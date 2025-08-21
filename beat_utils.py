@@ -5,7 +5,7 @@ Beat alignment utilities for precise DJ mixing
 
 import numpy as np
 import librosa
-from typing import Tuple
+from typing import Tuple, List
 from models import Track
 
 
@@ -351,14 +351,16 @@ class BeatAligner:
             print(f"    Track2 beats in segment: {len(track2_segment_beats)}")
             print(f"    Ideal beat grid: {len(ideal_beat_positions)} beats")
             
-            # Apply micro-adjustments to track2 to match the ideal beat grid
-            track2_intro_aligned = self._micro_stretch_to_beat_grid(
-                track2_intro, track2_segment_beats, ideal_beat_positions, track2.sr
+            # Apply intelligent beat alignment to both tracks for perfect synchronization
+            print("    Applying intelligent beat shifting for perfect alignment...")
+            track1_outro_aligned, track2_intro_aligned = self._apply_intelligent_beat_shifting(
+                track1_outro, track2_intro, track1_segment_beats, track2_segment_beats, 
+                ideal_beat_positions, track1.sr
             )
             
             # Ensure both tracks are exactly the same length
-            min_length = min(len(track1_outro), len(track2_intro_aligned))
-            track1_outro_final = track1_outro[:min_length]
+            min_length = min(len(track1_outro_aligned), len(track2_intro_aligned))
+            track1_outro_final = track1_outro_aligned[:min_length]
             track2_intro_final = track2_intro_aligned[:min_length]
             
             print(f"    Final alignment: {min_length} samples ({min_length/track1.sr:.3f}s)")
@@ -370,6 +372,224 @@ class BeatAligner:
             print("    Using original audio segments")
             return track1_outro, track2_intro
     
+    def _apply_intelligent_beat_shifting(self, track1_outro: np.ndarray, track2_intro: np.ndarray,
+                                        track1_beats: np.ndarray, track2_beats: np.ndarray, 
+                                        ideal_beats: np.ndarray, sr: int) -> Tuple[np.ndarray, np.ndarray]:
+        """
+        Intelligently shift beats in both tracks to achieve perfect alignment while preserving 
+        total transition length and maintaining continuity at both edges.
+        
+        Strategy:
+        1. Calculate optimal target beat positions (compromise between both tracks)
+        2. Apply minimal stretching/shifting to both tracks to meet these targets
+        3. Preserve segment boundaries to maintain overall mix timing
+        4. Use piecewise processing to maintain musical integrity
+        """
+        try:
+            print("      Calculating optimal beat alignment strategy...")
+            
+            # Find common beat grid by analyzing both tracks
+            target_beats = self._calculate_optimal_beat_grid(
+                track1_beats, track2_beats, ideal_beats, len(track1_outro), sr
+            )
+            
+            if len(target_beats) < 2:
+                print("      Insufficient beats for intelligent alignment, using original audio")
+                return track1_outro, track2_intro
+            
+            print(f"      Target beat grid: {len(target_beats)} beats")
+            
+            # Apply intelligent beat shifting to track1 (minimal adjustments)
+            track1_aligned = self._apply_intelligent_stretch(
+                track1_outro, track1_beats, target_beats, sr, "Track1"
+            )
+            
+            # Apply intelligent beat shifting to track2 (minimal adjustments)  
+            track2_aligned = self._apply_intelligent_stretch(
+                track2_intro, track2_beats, target_beats, sr, "Track2"
+            )
+            
+            # Ensure both tracks maintain exact original length (critical for mix continuity)
+            track1_aligned = self._preserve_segment_length(track1_aligned, len(track1_outro))
+            track2_aligned = self._preserve_segment_length(track2_aligned, len(track2_intro))
+            
+            print(f"      Intelligent alignment complete: {len(track1_aligned)} samples")
+            return track1_aligned, track2_aligned
+            
+        except Exception as e:
+            print(f"      Warning: Intelligent beat shifting failed: {e}")
+            print("      Using original audio segments")
+            return track1_outro, track2_intro
+    
+    def _calculate_optimal_beat_grid(self, track1_beats: np.ndarray, track2_beats: np.ndarray, 
+                                   ideal_beats: np.ndarray, segment_length: int, sr: int) -> np.ndarray:
+        """Calculate optimal beat positions that minimize adjustments for both tracks"""
+        try:
+            # Start with ideal beat grid as base
+            target_beats = []
+            
+            for ideal_beat in ideal_beats:
+                if ideal_beat >= segment_length:
+                    break
+                    
+                # Find closest beats in both tracks
+                track1_distances = np.abs(track1_beats - ideal_beat) if len(track1_beats) > 0 else [float('inf')]
+                track2_distances = np.abs(track2_beats - ideal_beat) if len(track2_beats) > 0 else [float('inf')]
+                
+                track1_closest_idx = np.argmin(track1_distances) if len(track1_beats) > 0 else None
+                track2_closest_idx = np.argmin(track2_distances) if len(track2_beats) > 0 else None
+                
+                # Calculate compromise position (weighted average favoring closer beats)
+                positions = [ideal_beat]  # Always include ideal as fallback
+                
+                if track1_closest_idx is not None and track1_distances[track1_closest_idx] < sr * 0.3:
+                    positions.append(track1_beats[track1_closest_idx])
+                    
+                if track2_closest_idx is not None and track2_distances[track2_closest_idx] < sr * 0.3:
+                    positions.append(track2_beats[track2_closest_idx])
+                
+                # Use weighted average with preference for actual beats over ideal
+                if len(positions) == 1:
+                    target_beat = positions[0]
+                else:
+                    # Weight actual beats more than ideal, average of actual beats
+                    actual_beats = positions[1:] if len(positions) > 1 else []
+                    if actual_beats:
+                        target_beat = np.mean(actual_beats)
+                    else:
+                        target_beat = ideal_beat
+                
+                target_beats.append(target_beat)
+            
+            return np.array(target_beats)
+            
+        except Exception as e:
+            print(f"        Warning: Beat grid calculation failed: {e}")
+            return ideal_beats[:len(ideal_beats)//2] if len(ideal_beats) > 2 else np.array([])
+    
+    def _apply_intelligent_stretch(self, audio: np.ndarray, detected_beats: np.ndarray, 
+                                 target_beats: np.ndarray, sr: int, track_name: str) -> np.ndarray:
+        """Apply minimal stretching to align detected beats with target beats"""
+        try:
+            if len(detected_beats) == 0 or len(target_beats) == 0:
+                return audio
+            
+            # Match detected beats to target beats (find best alignment)
+            beat_pairs = []
+            used_targets = set()
+            
+            for detected_beat in detected_beats:
+                if detected_beat >= len(audio):
+                    continue
+                    
+                # Find closest unused target beat
+                available_targets = [i for i in range(len(target_beats)) if i not in used_targets]
+                if not available_targets:
+                    break
+                    
+                distances = [abs(target_beats[i] - detected_beat) for i in available_targets]
+                closest_target_idx = available_targets[np.argmin(distances)]
+                
+                if distances[np.argmin(distances)] < sr * 0.4:  # Within 0.4 seconds
+                    beat_pairs.append((detected_beat, target_beats[closest_target_idx]))
+                    used_targets.add(closest_target_idx)
+            
+            if len(beat_pairs) < 2:
+                print(f"        {track_name}: Insufficient beat pairs, using original audio")
+                return audio
+                
+            beat_pairs.sort(key=lambda x: x[0])  # Sort by detected beat position
+            print(f"        {track_name}: Aligning {len(beat_pairs)} beat pairs")
+            
+            # Apply piecewise intelligent stretching
+            return self._piecewise_intelligent_stretch(audio, beat_pairs, sr)
+            
+        except Exception as e:
+            print(f"        Warning: {track_name} stretch failed: {e}")
+            return audio
+    
+    def _piecewise_intelligent_stretch(self, audio: np.ndarray, beat_pairs: List[Tuple[float, float]], sr: int) -> np.ndarray:
+        """Apply piecewise stretching with intelligent segment processing"""
+        try:
+            stretched_segments = []
+            
+            # Process each segment between beat pairs
+            for i in range(len(beat_pairs)):
+                if i == 0:
+                    # First segment: from start to first beat
+                    segment_start = 0
+                    segment_end = int(beat_pairs[i][0])
+                    target_start = 0
+                    target_end = int(beat_pairs[i][1])
+                else:
+                    # Subsequent segments: from previous beat to current beat
+                    segment_start = int(beat_pairs[i-1][0])
+                    segment_end = int(beat_pairs[i][0])
+                    target_start = int(beat_pairs[i-1][1])
+                    target_end = int(beat_pairs[i][1])
+                
+                # Extract segment
+                if segment_end > segment_start and segment_end <= len(audio):
+                    segment = audio[segment_start:segment_end]
+                    target_length = target_end - target_start
+                    
+                    # Apply minimal stretching only if necessary
+                    if target_length > 0 and abs(len(segment) - target_length) > sr * 0.01:  # >10ms difference
+                        stretch_ratio = len(segment) / target_length
+                        if 0.95 <= stretch_ratio <= 1.05:  # Only minor adjustments
+                            stretched_segment = librosa.effects.time_stretch(segment, rate=stretch_ratio)
+                            # Ensure exact target length
+                            if len(stretched_segment) != target_length:
+                                if len(stretched_segment) > target_length:
+                                    stretched_segment = stretched_segment[:target_length]
+                                else:
+                                    padding = np.zeros(target_length - len(stretched_segment))
+                                    stretched_segment = np.concatenate([stretched_segment, padding])
+                        else:
+                            # Stretch ratio too extreme, use original segment with padding/cropping
+                            if len(segment) > target_length:
+                                stretched_segment = segment[:target_length]
+                            else:
+                                padding = np.zeros(target_length - len(segment))
+                                stretched_segment = np.concatenate([segment, padding])
+                    else:
+                        # No stretching needed, use original segment
+                        stretched_segment = segment
+                    
+                    stretched_segments.append(stretched_segment)
+            
+            # Handle final segment (from last beat to end)
+            if len(beat_pairs) > 0:
+                final_segment_start = int(beat_pairs[-1][0])
+                final_target_start = int(beat_pairs[-1][1])
+                
+                if final_segment_start < len(audio):
+                    final_segment = audio[final_segment_start:]
+                    stretched_segments.append(final_segment)
+            
+            # Concatenate all segments
+            if stretched_segments:
+                result = np.concatenate(stretched_segments)
+                return result
+            else:
+                return audio
+                
+        except Exception as e:
+            print(f"          Warning: Piecewise stretch failed: {e}")
+            return audio
+    
+    def _preserve_segment_length(self, audio: np.ndarray, target_length: int) -> np.ndarray:
+        """Ensure audio segment maintains exact target length for mix continuity"""
+        if len(audio) == target_length:
+            return audio
+        elif len(audio) > target_length:
+            # Crop to exact length
+            return audio[:target_length]
+        else:
+            # Pad with zeros to exact length
+            padding = np.zeros(target_length - len(audio))
+            return np.concatenate([audio, padding])
+
     def _micro_stretch_to_beat_grid(self, audio: np.ndarray, detected_beats: np.ndarray, 
                                   ideal_beats: np.ndarray, sr: int) -> np.ndarray:
         """

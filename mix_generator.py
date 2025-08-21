@@ -62,6 +62,76 @@ class MixGenerator:
         else:
             raise ValueError(f"Unknown tempo strategy: {self.tempo_strategy}")
     
+    def _apply_intelligent_transition_alignment(self, track1_overlap: np.ndarray, track2_overlap: np.ndarray,
+                                              track1: Track, track2: Track, track1_start_sample: int, 
+                                              track2_start_sample: int, transition_duration: float) -> Tuple[np.ndarray, np.ndarray]:
+        """
+        Apply intelligent beat alignment within transition segments while preserving segment length and continuity.
+        
+        This method aligns beats within the transition without changing the overall timing of the mix.
+        Both tracks are adjusted minimally to achieve perfect beat synchronization.
+        """
+        try:
+            if not hasattr(self, 'beat_aligner'):
+                print("    Beat aligner not available, using original segments")
+                return track1_overlap, track2_overlap
+            
+            print("    Calculating beat positions within transition segments...")
+            
+            # Convert beat positions to samples
+            track1_beats_samples = librosa.frames_to_samples(track1.beats, hop_length=512)
+            track2_beats_samples = librosa.frames_to_samples(track2.beats, hop_length=512)
+            
+            # Find beats within the transition segments
+            track1_end_sample = track1_start_sample + len(track1_overlap)
+            track1_segment_beats = track1_beats_samples[
+                (track1_beats_samples >= track1_start_sample) & 
+                (track1_beats_samples < track1_end_sample)
+            ] - track1_start_sample  # Make relative to segment start
+            
+            track2_end_sample = track2_start_sample + len(track2_overlap)
+            track2_segment_beats = track2_beats_samples[
+                (track2_beats_samples >= track2_start_sample) & 
+                (track2_beats_samples < track2_end_sample)
+            ] - track2_start_sample  # Make relative to segment start
+            
+            if len(track1_segment_beats) == 0 and len(track2_segment_beats) == 0:
+                print("    No beats found in transition segments, using original audio")
+                return track1_overlap, track2_overlap
+            
+            # Create ideal beat grid for the transition
+            beats_per_second = track1.bpm / 60.0
+            samples_per_beat = track1.sr / beats_per_second
+            
+            # Generate ideal beat positions for the transition duration
+            num_beats = max(1, int(transition_duration * beats_per_second))
+            ideal_beat_positions = np.arange(num_beats) * samples_per_beat
+            
+            # Only use beats within the actual segment length
+            segment_length = len(track1_overlap)
+            ideal_beat_positions = ideal_beat_positions[ideal_beat_positions < segment_length]
+            
+            if len(ideal_beat_positions) == 0:
+                print("    No ideal beats fit in transition, using original audio")
+                return track1_overlap, track2_overlap
+            
+            print(f"    Track1 beats in transition: {len(track1_segment_beats)}")
+            print(f"    Track2 beats in transition: {len(track2_segment_beats)}")
+            print(f"    Ideal beat grid: {len(ideal_beat_positions)} beats")
+            
+            # Apply the intelligent beat shifting using the BeatAligner's new method
+            track1_aligned, track2_aligned = self.beat_aligner._apply_intelligent_beat_shifting(
+                track1_overlap, track2_overlap, track1_segment_beats, track2_segment_beats,
+                ideal_beat_positions, track1.sr
+            )
+            
+            return track1_aligned, track2_aligned
+            
+        except Exception as e:
+            print(f"    Warning: Intelligent transition alignment failed: {e}")
+            print("    Using original transition segments")
+            return track1_overlap, track2_overlap
+
     def _apply_tempo_ramp_to_transition(self, track1_overlap: np.ndarray, track2_overlap: np.ndarray, 
                                       tempo_ramp_data: dict, sr: int) -> Tuple[np.ndarray, np.ndarray]:
         """
@@ -1461,6 +1531,13 @@ class MixGenerator:
             else:
                 track1_overlap = track1_overlap[:min_overlap_length]
                 track2_overlap = track2_overlap[:min_overlap_length]
+                
+                # Apply intelligent beat alignment within the transition segments
+                print(f"  🎯 Applying intelligent beat alignment within transition...")
+                track1_overlap, track2_overlap = self._apply_intelligent_transition_alignment(
+                    track1_overlap, track2_overlap, actual_prev_track, stretched_track,
+                    transition_start_in_mix, track2_start_in_track, transition_duration
+                )
                 
                 # Apply tempo ramping during transition if needed
                 if tempo_ramp_data['ramp_needed']:
