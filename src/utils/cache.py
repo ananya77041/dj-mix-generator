@@ -101,10 +101,15 @@ class TrackCache:
             print(f"Warning: Could not calculate hash for {filepath}: {e}")
             return None
     
-    def _get_cache_key(self, filepath: str, manual_downbeats: bool = False) -> Optional[str]:
+    def _get_cache_key(self, filepath: str, manual_downbeats: bool = False, user_preference: str = None) -> Optional[str]:
         """
         Generate cache key based on file hash and modification time
         Returns None if file cannot be accessed
+        
+        Args:
+            filepath: Path to the audio file
+            manual_downbeats: Whether in manual mode
+            user_preference: User's choice in GUI ('manual', 'auto-detect', or None)
         """
         try:
             file_stat = os.stat(filepath)
@@ -113,8 +118,15 @@ class TrackCache:
             if file_hash is None:
                 return None
             
-            # Include file size, modification time, and downbeat mode for cache isolation
-            downbeat_suffix = "_manual" if manual_downbeats else "_auto"
+            # Include file size, modification time, and mode for cache isolation
+            if manual_downbeats:
+                if user_preference == 'auto-detect':
+                    downbeat_suffix = "_manual_auto"  # Manual mode but user chose auto-detect
+                else:
+                    downbeat_suffix = "_manual"  # Manual mode with manual selection
+            else:
+                downbeat_suffix = "_auto"  # Pure automatic mode
+                
             cache_key = f"{file_hash}_{file_stat.st_size}_{int(file_stat.st_mtime)}{downbeat_suffix}"
             return cache_key
             
@@ -150,20 +162,20 @@ class TrackCache:
                 deserialized[key] = value
         return deserialized
     
-    def is_cached(self, filepath: str, manual_downbeats: bool = False) -> bool:
+    def is_cached(self, filepath: str, manual_downbeats: bool = False, user_preference: str = None) -> bool:
         """Check if track analysis is already cached"""
-        cache_key = self._get_cache_key(filepath, manual_downbeats)
+        cache_key = self._get_cache_key(filepath, manual_downbeats, user_preference)
         if cache_key is None:
             return False
         
         return cache_key in self.metadata
     
-    def get_cached_analysis(self, filepath: str, manual_downbeats: bool = False) -> Optional[Track]:
+    def get_cached_analysis(self, filepath: str, manual_downbeats: bool = False, user_preference: str = None) -> Optional[Track]:
         """
         Retrieve cached track analysis
         Returns None if not found or if cache is invalid
         """
-        cache_key = self._get_cache_key(filepath, manual_downbeats)
+        cache_key = self._get_cache_key(filepath, manual_downbeats, user_preference)
         if cache_key is None or cache_key not in self.metadata:
             return None
         
@@ -248,9 +260,9 @@ class TrackCache:
             self._remove_cache_entry(cache_key)
             return None
     
-    def cache_analysis(self, track: Track, manual_downbeats: bool = False):
+    def cache_analysis(self, track: Track, manual_downbeats: bool = False, user_preference: str = None):
         """Cache track analysis results"""
-        cache_key = self._get_cache_key(str(track.filepath), manual_downbeats)
+        cache_key = self._get_cache_key(str(track.filepath), manual_downbeats, user_preference)
         if cache_key is None:
             return
         
@@ -261,6 +273,10 @@ class TrackCache:
             
             # Convert Path to string for JSON serialization
             track_dict['filepath'] = str(track.filepath)
+            
+            # Store user preference for GUI context
+            track_dict['user_preference'] = user_preference
+            track_dict['cached_as_manual'] = manual_downbeats
             
             # Serialize numpy arrays in metadata
             track_dict = self._serialize_numpy_arrays(track_dict)
@@ -333,6 +349,33 @@ class TrackCache:
                 "cache_size_mb": 0,
                 "cache_directory": str(self.cache_dir)
             }
+    
+    def print_info(self):
+        """Print detailed cache information"""
+        info = self.get_cache_info()
+        print(f"Track Analysis Cache Information:")
+        print(f"  Directory: {info['cache_directory']}")
+        print(f"  Cached tracks: {info['cached_tracks']}")
+        print(f"  Cache size: {info['cache_size_mb']:.2f} MB")
+        
+        # Show breakdown of cache types
+        if self.metadata:
+            auto_count = 0
+            manual_count = 0
+            manual_auto_count = 0
+            
+            for cache_key, data in self.metadata.items():
+                if cache_key.endswith('_manual_auto'):
+                    manual_auto_count += 1
+                elif cache_key.endswith('_manual'):
+                    manual_count += 1
+                elif cache_key.endswith('_auto'):
+                    auto_count += 1
+            
+            print(f"  Cache breakdown:")
+            print(f"    Automatic mode: {auto_count}")
+            print(f"    Manual selections: {manual_count}")
+            print(f"    Manual mode (auto-detect): {manual_auto_count}")
     
     def cleanup_orphaned_files(self):
         """Remove audio data files that don't have corresponding metadata entries"""

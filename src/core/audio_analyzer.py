@@ -37,13 +37,21 @@ class AudioAnalyzer:
         """Analyze a single audio file for BPM, key, and beat positions"""
         print(f"Analyzing: {os.path.basename(filepath)}")
         
-        # Check cache first
+        # Check cache first - try to find existing cache with user's preference
         if self.use_cache and self.cache:
+            # First try to find cache for current mode
             cached_track = self.cache.get_cached_analysis(filepath, self.manual_downbeats)
             if cached_track is not None:
                 cache_type = "manual" if self.manual_downbeats else "automatic"
                 print(f"  ✓ Loaded from cache ({cache_type} downbeats)")
                 return cached_track
+            
+            # If in manual mode, also try to find manual_auto cache (user previously chose auto-detect)
+            if self.manual_downbeats:
+                cached_track = self.cache.get_cached_analysis(filepath, self.manual_downbeats, 'auto-detect')
+                if cached_track is not None:
+                    print(f"  ✓ Loaded from cache (manual mode, user previously chose auto-detect)")
+                    return cached_track
         
         try:
             print(f"  Performing fresh analysis...")
@@ -58,13 +66,14 @@ class AudioAnalyzer:
             
             # Downbeat detection and potential BPM adjustment
             if self.manual_downbeats:
-                downbeats, was_manual, final_bpm = self._get_manual_downbeats(audio, sr, beats, os.path.basename(filepath), bpm)
+                downbeats, was_manual, final_bpm, user_preference = self._get_manual_downbeats(audio, sr, beats, os.path.basename(filepath), bpm)
                 if final_bpm != bpm:
                     print(f"  BPM adjusted: {bpm:.1f} → {final_bpm:.1f}")
                     bpm = final_bpm
             else:
                 downbeats = self._detect_downbeats(audio, sr, beats, bpm)
                 was_manual = False
+                user_preference = None
             
             # Key detection (simplified chromagram approach)
             chroma = librosa.feature.chroma_stft(y=audio, sr=sr)
@@ -91,10 +100,22 @@ class AudioAnalyzer:
                 key_info=key_info
             )
             
-            # Cache the results - only cache as manual if it was actually manually selected
+            # Cache the results with proper user preference handling
             if self.use_cache and self.cache:
-                cache_as_manual = self.manual_downbeats and was_manual
-                self.cache.cache_analysis(track, cache_as_manual)
+                # Always cache in the context it was requested (manual mode vs auto mode)
+                # But also store what the user actually chose
+                self.cache.cache_analysis(track, self.manual_downbeats, user_preference)
+                
+                # Log what was cached
+                if self.manual_downbeats:
+                    if user_preference == 'auto-detect':
+                        print(f"  Cached analysis (manual mode, user chose auto-detect)")
+                    elif user_preference == 'manual':
+                        print(f"  Cached analysis (manual mode, user manually selected)")
+                    else:
+                        print(f"  Cached analysis (manual mode, {user_preference})")
+                else:
+                    print(f"  Cached analysis (automatic mode)")
             
             return track
             
@@ -305,10 +326,10 @@ class AudioAnalyzer:
             else:
                 return np.array([beats[0]]) if len(beats) > 0 else np.array([])
     
-    def _get_manual_downbeats(self, audio: np.ndarray, sr: int, beats: np.ndarray, track_name: str, detected_bpm: float) -> tuple[np.ndarray, bool, float]:
+    def _get_manual_downbeats(self, audio: np.ndarray, sr: int, beats: np.ndarray, track_name: str, detected_bpm: float) -> tuple[np.ndarray, bool, float, str]:
         """
         Get downbeats through manual selection via GUI
-        Returns (downbeats, was_manually_selected, final_bpm)
+        Returns (downbeats, was_manually_selected, final_bpm, user_preference)
         """
         try:
             try:
@@ -321,10 +342,10 @@ class AudioAnalyzer:
             
             if result == 'cancel':
                 print("  Manual selection cancelled, using automatic detection")
-                return self._detect_downbeats(audio, sr, beats, detected_bpm), False, detected_bpm
+                return self._detect_downbeats(audio, sr, beats, detected_bpm), False, detected_bpm, 'cancelled'
             elif result is None:
                 print("  Using automatic detection as requested")
-                return self._detect_downbeats(audio, sr, beats, detected_bpm), False, detected_bpm
+                return self._detect_downbeats(audio, sr, beats, detected_bpm), False, detected_bpm, 'auto-detect'
             elif isinstance(result, dict):
                 first_downbeat = result['first_downbeat']
                 final_bpm = result['bpm']
@@ -354,17 +375,17 @@ class AudioAnalyzer:
                 if downbeat_indices:
                     downbeats = beats[downbeat_indices]
                     print(f"  Generated {len(downbeats)} downbeats from manual selection")
-                    return downbeats, True, final_bpm
+                    return downbeats, True, final_bpm, 'manual'
                 else:
                     print("  Could not generate downbeats from selection, using automatic detection")
-                    return self._detect_downbeats(audio, sr, beats, detected_bpm), False, detected_bpm
+                    return self._detect_downbeats(audio, sr, beats, detected_bpm), False, detected_bpm, 'fallback'
             else:
                 print("  Unexpected result from GUI, using automatic detection")
-                return self._detect_downbeats(audio, sr, beats, detected_bpm), False, detected_bpm
+                return self._detect_downbeats(audio, sr, beats, detected_bpm), False, detected_bpm, 'fallback'
             
         except ImportError:
             print("  Warning: GUI not available, falling back to automatic detection")
-            return self._detect_downbeats(audio, sr, beats, detected_bpm), False, detected_bpm
+            return self._detect_downbeats(audio, sr, beats, detected_bpm), False, detected_bpm, 'no-gui'
         except Exception as e:
             print(f"  Warning: Manual selection failed ({e}), using automatic detection")
-            return self._detect_downbeats(audio, sr, beats, detected_bpm), False, detected_bpm
+            return self._detect_downbeats(audio, sr, beats, detected_bpm), False, detected_bpm, 'error'

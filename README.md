@@ -7,12 +7,15 @@ Professional DJ mixing tool that creates seamless transitions between tracks wit
 - **Professional beat alignment** with intelligent beat shifting and artifact prevention
 - **Dynamic tempo ramping** for smooth BPM transitions between tracks with large differences
 - **Harmonic mixing** with Circle of Fifths key matching and automatic track reordering
+- **Random track selection** with customizable count for variety in mixes
+- **BPM-based sorting** for building energy progression in sets
 - **Interactive beatgrid alignment** with GPU-accelerated Dear PyGui interface
 - **Intelligent track caching** with automatic analysis persistence
 - **Measure-based transitions** for musically consistent mixing
 - **Professional audio quality** with volume normalization, EQ matching, and peak alignment
+- **Frequency-specific transitions** (LF/MF/HF) for enhanced mixing control
 - **Transition preview mode** with 2-measure buffers for testing quality
-- **Multiple tempo strategies** (sequential/uniform) and smart BPM/key sorting
+- **Multiple tempo strategies** (sequential/uniform/match-track) and flexible track ordering
 - **Manual downbeat selection** for precision timing control
 
 ## Installation
@@ -41,13 +44,29 @@ python dj_mix_generator.py track1.wav track2.wav track3.wav
 
 Creates seamless 8-measure transitions using the first track's BPM, outputs `dj_mix.wav`.
 
-### Harmonic Mixing
+### Track Ordering Options
 
+**Harmonic Mixing**
 ```bash
 python dj_mix_generator.py --reorder-by-key track1.wav track2.wav track3.wav
 ```
-
 Reorders tracks for optimal harmonic compatibility using Circle of Fifths relationships.
+
+**BPM Sorting**
+```bash
+python dj_mix_generator.py --bpm-sort track1.wav track2.wav track3.wav
+```
+Sorts tracks by BPM in ascending order for energy progression.
+
+**Random Selection**
+```bash
+# Select 5 tracks at random and randomize their order
+python dj_mix_generator.py --random-order 5 track1.wav track2.wav track3.wav track4.wav track5.wav track6.wav
+
+# Combine with BPM sort (sorting applies to final selected tracks)
+python dj_mix_generator.py --random-order 3 --bpm-sort track1.wav track2.wav track3.wav track4.wav
+```
+Randomly selects N tracks from the full selection and randomizes their order, overriding all other ordering options. Can be combined with `--bpm-sort` to sort the final selected tracks.
 
 ### Transition Preview
 
@@ -130,41 +149,49 @@ python dj_mix_generator.py --no-peak-alignment track1.wav track2.wav track3.wav
 
 Features: RMS volume normalization, 3-band EQ matching, micro peak-to-beat alignment, and low-frequency blending for professional results.
 
-### Low-Frequency Transition
+### Frequency-Specific Transitions
 
+**Low-Frequency (LF) Transition** - *Enabled by default*
 ```bash
-# Enable low-frequency blending to prevent bass/kick clashing
+# LF transitions are enabled by default, disable with:
+python dj_mix_generator.py --no-lf-transition track1.wav track2.wav track3.wav
+
+# Explicitly enable (redundant since it's default):
 python dj_mix_generator.py --lf-transition track1.wav track2.wav track3.wav
-
-# Combine with other features
-python dj_mix_generator.py --tempo-strategy=match-track --lf-transition track1.wav track2.wav track3.wav
 ```
+Prevents kick drum and bass clashing by gradually blending low frequencies (20-200 Hz) during transitions.
 
-Prevents kick drum and bass clashing by gradually blending low frequencies (20-200 Hz) from 100% track1 to 100% track2 during transitions while maintaining normal crossfading for higher frequencies.
-
-### Mid-Frequency Transition
-
+**Mid-Frequency (MF) Transition** - *Enabled by default*
 ```bash
-# Enable mid-frequency blending for smoother melodic transitions
+# MF transitions are enabled by default, disable with:
+python dj_mix_generator.py --no-mf-transition track1.wav track2.wav track3.wav
+
+# Explicitly enable (redundant since it's default):
 python dj_mix_generator.py --mf-transition track1.wav track2.wav track3.wav
-
-# Combine with tempo strategies for optimal results
-python dj_mix_generator.py --tempo-strategy=uniform --mf-transition track1.wav track2.wav track3.wav
 ```
+Smooth transitions for melodic content by blending mid frequencies (200-2000 Hz) including vocals and melody lines.
 
-Creates smoother transitions for melodic and harmonic content by gradually blending mid frequencies (200-2000 Hz) from 100% track1 to 100% track2 during transitions. This frequency range includes vocals, melody lines, and harmonic instruments, resulting in more musical transitions while preserving normal crossfading for bass and treble.
+**High-Frequency (HF) Transition** - *Disabled by default*
+```bash
+# Enable high-frequency blending:
+python dj_mix_generator.py --hf-transition track1.wav track2.wav track3.wav
+
+# Disable (redundant since it's default):
+python dj_mix_generator.py --no-hf-transition track1.wav track2.wav track3.wav
+```
+Blends high frequencies (2000-8000 Hz) for enhanced transition smoothness when needed.
 
 ### Tempo Strategies
 
 ```bash
-# Sequential: Use first track's BPM (default)
+# Match-track: Each track plays at native tempo with ramping during transitions (default)
+python dj_mix_generator.py --tempo-strategy=match-track track1.wav track2.wav track3.wav
+
+# Sequential: Use first track's BPM for all tracks
 python dj_mix_generator.py --tempo-strategy=sequential track1.wav track2.wav track3.wav
 
 # Uniform: Use average BPM of all tracks
 python dj_mix_generator.py --tempo-strategy=uniform track1.wav track2.wav track3.wav
-
-# Match-track: Each track plays at native tempo with tempo ramping during transitions
-python dj_mix_generator.py --tempo-strategy=match-track track1.wav track2.wav track3.wav
 ```
 
 ### Transition Length
@@ -180,17 +207,20 @@ python dj_mix_generator.py --transition-seconds=30 track1.wav track2.wav track3.
 ## Example Usage
 
 ```bash
-# Basic mixing
+# Basic mixing (LF/MF transitions enabled by default)
 python dj_mix_generator.py track1.wav track2.wav track3.wav
 
 # Harmonic mixing with preview
 python dj_mix_generator.py --reorder-by-key --transitions-only track1.wav track2.wav track3.wav
 
-# Manual precision
-python dj_mix_generator.py --manual-downbeats --interactive-beats track1.wav track2.wav
+# Random selection with BPM sorting
+python dj_mix_generator.py --random-order 4 --bpm-sort *.wav
 
-# Professional quality
-python dj_mix_generator.py --tempo-strategy=uniform --transition-measures=16 track1.wav track2.wav
+# Manual precision
+python dj_mix_generator.py --manual-downbeats --transition-downbeats track1.wav track2.wav
+
+# Professional quality with all transitions
+python dj_mix_generator.py --tempo-strategy=uniform --transition-measures=16 --hf-transition track1.wav track2.wav
 ```
 
 ## How It Works
@@ -211,14 +241,24 @@ python dj_mix_generator.py --tempo-strategy=uniform --transition-measures=16 tra
 
 ## Project Structure
 
-Modular components:
-- `models.py` - Track dataclass
-- `audio_analyzer.py` - BPM/key detection 
-- `beat_utils.py` - Beat alignment
-- `mix_generator.py` - Mixing engine
-- `key_matcher.py` - Harmonic mixing
-- `track_cache.py` - Analysis caching
-- `dj_mix_generator.py` - Main CLI
+```
+src/
+├── cli/
+│   ├── main.py           # Main CLI application
+│   └── args_parser.py    # Command-line argument parsing
+├── core/
+│   ├── config.py         # Configuration classes
+│   ├── models.py         # Track dataclass
+│   ├── audio_analyzer.py # BPM/key detection
+│   ├── mix_generator.py  # Mixing engine
+│   └── beat_utils.py     # Beat alignment utilities
+├── utils/
+│   ├── key_matching.py   # Harmonic mixing
+│   └── cache.py          # Analysis caching
+└── gui/                  # Interactive GUI components
+
+dj_mix_generator.py       # Legacy entry point (backward compatibility)
+```
 
 
 ## Troubleshooting
