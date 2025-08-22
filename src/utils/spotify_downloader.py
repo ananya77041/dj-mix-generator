@@ -8,6 +8,7 @@ import os
 import re
 import subprocess
 import tempfile
+import json
 from pathlib import Path
 from typing import List, Optional, Dict, Any
 import urllib.parse
@@ -16,20 +17,22 @@ import urllib.parse
 class SpotifyPlaylistDownloader:
     """Downloads Spotify playlists using spotdl and manages local files"""
     
-    def __init__(self, download_dir: Optional[str] = None):
+    def __init__(self, base_dir: Optional[str] = None):
         """
         Initialize the downloader
         
         Args:
-            download_dir: Directory to download tracks to. If None, uses temp directory.
+            base_dir: Base directory where playlist folders will be created. 
+                     If None, uses current working directory.
         """
-        if download_dir is None:
-            self.download_dir = Path(tempfile.mkdtemp(prefix="dj_mix_spotify_"))
+        if base_dir is None:
+            self.base_dir = Path.cwd()
         else:
-            self.download_dir = Path(download_dir)
+            self.base_dir = Path(base_dir)
         
-        self.download_dir.mkdir(parents=True, exist_ok=True)
-        print(f"Spotify tracks will be downloaded to: {self.download_dir}")
+        self.download_dir = None  # Will be set after getting playlist name
+        self.playlist_name = None
+        self.is_temp_dir = False
     
     def _is_valid_spotify_playlist_url(self, url: str) -> bool:
         """Validate if URL is a valid Spotify playlist URL"""
@@ -52,6 +55,80 @@ class SpotifyPlaylistDownloader:
         
         return url
     
+    def _get_playlist_metadata(self, spotify_url: str) -> Dict[str, Any]:
+        """
+        Get playlist metadata using spotdl save command
+        
+        Args:
+            spotify_url: Spotify playlist URL or URI
+            
+        Returns:
+            Dictionary containing playlist metadata
+            
+        Raises:
+            ValueError: If metadata extraction fails
+        """
+        try:
+            # Create temporary file for metadata
+            with tempfile.NamedTemporaryFile(mode='w', suffix='.spotdl', delete=False) as temp_file:
+                temp_metadata_file = temp_file.name
+            
+            # Run spotdl save command to get metadata
+            cmd = [
+                "spotdl",
+                "save",
+                spotify_url,
+                "--save-file", temp_metadata_file
+            ]
+            
+            result = subprocess.run(
+                cmd,
+                capture_output=True,
+                text=True
+            )
+            
+            if result.returncode != 0:
+                raise ValueError(f"Failed to get playlist metadata: {result.stderr}")
+            
+            # Read the metadata file
+            with open(temp_metadata_file, 'r', encoding='utf-8') as f:
+                metadata = json.load(f)
+            
+            # Clean up temp file
+            os.unlink(temp_metadata_file)
+            
+            return metadata
+            
+        except FileNotFoundError:
+            raise ValueError(
+                "spotdl is not installed. Install it with: pip install spotdl"
+            )
+        except Exception as e:
+            raise ValueError(f"Failed to get playlist metadata: {str(e)}")
+    
+    def _sanitize_directory_name(self, name: str) -> str:
+        """
+        Sanitize playlist name for use as directory name
+        
+        Args:
+            name: Raw playlist name
+            
+        Returns:
+            Sanitized directory name
+        """
+        # Remove or replace problematic characters
+        sanitized = re.sub(r'[<>:"/\\|?*]', '_', name)
+        # Remove leading/trailing dots and spaces
+        sanitized = sanitized.strip('. ')
+        # Limit length
+        if len(sanitized) > 100:
+            sanitized = sanitized[:100].rstrip()
+        # Ensure it's not empty
+        if not sanitized:
+            sanitized = "spotify_playlist"
+        
+        return sanitized
+    
     def download_playlist(self, spotify_url: str, format: str = "wav") -> List[str]:
         """
         Download a Spotify playlist to local audio files
@@ -70,37 +147,58 @@ class SpotifyPlaylistDownloader:
             raise ValueError(f"Invalid Spotify playlist URL: {spotify_url}")
         
         normalized_url = self._normalize_spotify_url(spotify_url)
-        print(f"Downloading Spotify playlist: {normalized_url}")
+        print(f"🎵 Getting playlist metadata: {normalized_url}")
         
         try:
-            # Prepare spotdl command
+            # Get playlist metadata to extract the name
+            metadata = self._get_playlist_metadata(normalized_url)
+            
+            # Extract playlist name from metadata
+            if isinstance(metadata, list) and len(metadata) > 0:
+                # Get the list name from the first track's metadata
+                first_track = metadata[0]
+                self.playlist_name = first_track.get('list_name', 'Unknown Playlist')
+            else:
+                self.playlist_name = 'Unknown Playlist'
+            
+            # Sanitize the playlist name for directory use
+            sanitized_name = self._sanitize_directory_name(self.playlist_name)
+            
+            # Create download directory in the base directory
+            self.download_dir = self.base_dir / sanitized_name
+            self.download_dir.mkdir(parents=True, exist_ok=True)
+            
+            print(f"📁 Created directory: {self.download_dir}")
+            print(f"🎵 Downloading playlist: '{self.playlist_name}'")
+            
+            # Use spotdl's output template to organize files properly
+            output_template = "{artists} - {title}.{output-ext}"
+            
+            # Prepare spotdl download command
             cmd = [
                 "spotdl",
                 "download",
                 normalized_url,
-                "--output", str(self.download_dir),
+                "--output", str(self.download_dir / output_template),
                 "--format", format,
                 "--bitrate", "320k",  # High quality
                 "--threads", "4",     # Parallel downloads
-                "--overwrite", "skip" # Skip existing files
+                "--overwrite", "skip", # Skip existing files
+                "--playlist-numbering"  # Add track numbers for proper ordering
             ]
             
-            print("Running spotdl download...")
-            print(f"Command: {' '.join(cmd)}")
+            print("⬇️  Running spotdl download...")
             
             # Run spotdl command
             result = subprocess.run(
                 cmd,
                 capture_output=True,
-                text=True,
-                cwd=self.download_dir
+                text=True
             )
             
             if result.returncode != 0:
                 print(f"spotdl stderr: {result.stderr}")
                 raise ValueError(f"spotdl download failed: {result.stderr}")
-            
-            print(f"spotdl output: {result.stdout}")
             
             # Find downloaded files in order
             downloaded_files = self._get_downloaded_files(format)
@@ -108,7 +206,7 @@ class SpotifyPlaylistDownloader:
             if not downloaded_files:
                 raise ValueError("No files were downloaded")
             
-            print(f"Successfully downloaded {len(downloaded_files)} tracks")
+            print(f"✅ Successfully downloaded {len(downloaded_files)} tracks to: {self.download_dir}")
             return downloaded_files
             
         except FileNotFoundError:
@@ -143,9 +241,9 @@ class SpotifyPlaylistDownloader:
         return audio_files
     
     def cleanup(self):
-        """Clean up temporary download directory"""
+        """Clean up temporary download directory (only if it was a temp dir)"""
         import shutil
-        if self.download_dir.exists() and "dj_mix_spotify_" in str(self.download_dir):
+        if self.is_temp_dir and self.download_dir and self.download_dir.exists():
             print(f"Cleaning up temporary directory: {self.download_dir}")
             shutil.rmtree(self.download_dir)
     
@@ -153,7 +251,7 @@ class SpotifyPlaylistDownloader:
         """Cleanup on object destruction"""
         try:
             # Only cleanup if it's a temp directory
-            if "dj_mix_spotify_" in str(self.download_dir):
+            if self.is_temp_dir:
                 self.cleanup()
         except:
             pass  # Ignore cleanup errors

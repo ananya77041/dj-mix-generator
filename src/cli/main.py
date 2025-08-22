@@ -102,12 +102,8 @@ class DJMixGeneratorCLI:
             print(f"❌ Error: {e}")
             return 1
         finally:
-            # Cleanup temporary files if using Spotify downloader
-            if self.spotify_downloader:
-                try:
-                    self.spotify_downloader.cleanup()
-                except:
-                    pass  # Ignore cleanup errors
+            # No cleanup needed - downloaded files are kept in named directories
+            pass
     
     def _initialize_components(self):
         """Initialize analysis and mixing components"""
@@ -128,7 +124,7 @@ class DJMixGeneratorCLI:
         print(f"🎵 Downloading Spotify playlist: {spotify_url}")
         
         try:
-            # Initialize Spotify downloader
+            # Initialize Spotify downloader (uses current working directory as base)
             self.spotify_downloader = SpotifyPlaylistDownloader()
             
             # Download playlist
