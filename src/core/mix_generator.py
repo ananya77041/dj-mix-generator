@@ -221,7 +221,13 @@ class MixGenerator:
             
             # Apply time-stretching with varying tempo throughout the transition
             # We'll process the transition in small chunks with different stretch ratios
-            chunk_size = max(1024, transition_samples // 50)  # ~50 chunks for smooth ramping
+            # Use higher resolution for larger tempo differences to reduce artifacts
+            tempo_diff_ratio = max(start_bpm / end_bpm, end_bpm / start_bpm)
+            if tempo_diff_ratio > 1.5:  # Large tempo difference
+                chunk_size = max(128, transition_samples // 400)  # ~400 chunks for extreme smoothness
+                print(f"    Large tempo difference detected ({tempo_diff_ratio:.2f}x), using high-resolution ramping")
+            else:
+                chunk_size = max(256, transition_samples // 200)  # ~200 chunks for ultra-smooth ramping
             
             ramped_track1 = []
             ramped_track2 = []
@@ -1229,7 +1235,13 @@ class MixGenerator:
         # This ensures each track gradually transitions to the other's tempo
         try:
             n_samples = len(track1_outro)
-            chunk_size = max(1024, n_samples // 50)  # ~50 chunks for smooth ramping
+            # Use higher resolution for larger tempo differences to reduce artifacts
+            tempo_diff_ratio = max(start_bpm / end_bpm, end_bpm / start_bpm)
+            if tempo_diff_ratio > 1.5:  # Large tempo difference
+                chunk_size = max(128, n_samples // 400)  # ~400 chunks for extreme smoothness
+                print(f"  Large tempo difference detected ({tempo_diff_ratio:.2f}x), using high-resolution ramping")
+            else:
+                chunk_size = max(256, n_samples // 200)  # ~200 chunks for ultra-smooth ramping
             
             ramped_track1 = []
             ramped_track2 = []

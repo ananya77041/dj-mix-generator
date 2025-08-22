@@ -208,7 +208,12 @@ class TempoProcessor:
                                       start_bpm: float, end_bpm: float, sr: int) -> Tuple[np.ndarray, np.ndarray]:
         """Apply gradual tempo ramping using chunk-based processing"""
         n_samples = len(track1_audio)
-        chunk_size = max(1024, n_samples // 50)  # ~50 chunks for smooth ramping
+        # Use higher resolution for larger tempo differences to reduce artifacts
+        tempo_diff_ratio = max(start_bpm / end_bpm, end_bpm / start_bpm)
+        if tempo_diff_ratio > 1.5:  # Large tempo difference
+            chunk_size = max(128, n_samples // 400)  # ~400 chunks for extreme smoothness
+        else:
+            chunk_size = max(256, n_samples // 200)  # ~200 chunks for ultra-smooth ramping
         
         ramped_track1 = []
         ramped_track2 = []
