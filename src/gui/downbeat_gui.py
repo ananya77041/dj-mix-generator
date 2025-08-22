@@ -83,44 +83,52 @@ class DownbeatSelector:
             
             beat_strengths = np.array(beat_strengths)
             
-            # Find the strongest beat in the first measure (assuming 4/4 time)
+            # ALWAYS place the suggested first downbeat at exactly 0:00
             beats_per_measure = 4
-            if len(beat_strengths) >= beats_per_measure:
-                first_measure_end = min(beats_per_measure, len(beat_strengths))
-                best_first_beat_idx = np.argmax(beat_strengths[:first_measure_end])
-                auto_first_downbeat = self.display_beats[best_first_beat_idx]
-                
-                # Generate measure markers from this starting point
-                measure_markers = []
-                beats_per_second = self.detected_bpm / 60.0
-                measure_duration = beats_per_measure / beats_per_second
-                
-                # Add measures starting from the detected downbeat
-                current_measure = auto_first_downbeat
-                while current_measure <= self.display_duration:
-                    measure_markers.append(current_measure)
-                    current_measure += measure_duration
-                
-                # Also add measures before the detected downbeat if possible
-                current_measure = auto_first_downbeat - measure_duration
-                while current_measure >= 0:
-                    measure_markers.insert(0, current_measure)
-                    current_measure -= measure_duration
-                
-                return auto_first_downbeat, measure_markers
+            auto_first_downbeat = 0.0  # Always start at exactly 0:00
+            
+            # Calculate the beat interval from detected beats to determine measure spacing
+            if len(self.display_beats) > 4:
+                # Calculate intervals between consecutive beats
+                beat_intervals = np.diff(self.display_beats)
+                # Use median interval for robustness
+                median_beat_interval = np.median(beat_intervals)
+                calculated_bpm = 60.0 / median_beat_interval
+                print(f"  GUI: Calculated BPM from beat spacing: {calculated_bpm:.1f}")
             else:
-                # Not enough beats for a full measure, just use first beat
-                return self.display_beats[0] if len(self.display_beats) > 0 else None, []
+                # Use the originally detected BPM as fallback
+                calculated_bpm = self.detected_bpm
+                median_beat_interval = 60.0 / calculated_bpm
+                
+            # Generate measure markers starting from 0:00
+            measure_markers = []
+            measure_duration = median_beat_interval * beats_per_measure
+            
+            # Add measures starting from 0:00
+            current_measure = auto_first_downbeat  # Starting from 0:00
+            while current_measure <= self.display_duration:
+                measure_markers.append(current_measure)
+                current_measure += measure_duration
+            
+            return auto_first_downbeat, measure_markers
                 
         except Exception as e:
             print(f"Warning: Auto-detection failed: {e}")
-            # Fallback: use first beat and regular intervals
+            # Fallback: always start at 0:00 with regular intervals
             if len(self.display_beats) > 0:
-                beats_per_measure = 4
-                beats_per_second = self.detected_bpm / 60.0
-                measure_duration = beats_per_measure / beats_per_second
+                # Calculate beat interval from detected beats
+                if len(self.display_beats) > 4:
+                    beat_intervals = np.diff(self.display_beats)
+                    median_beat_interval = np.median(beat_intervals)
+                else:
+                    # Use original BPM as fallback
+                    median_beat_interval = 60.0 / self.detected_bpm
                 
-                auto_first_downbeat = self.display_beats[0]
+                # Always start from 0:00
+                beats_per_measure = 4
+                measure_duration = median_beat_interval * beats_per_measure
+                
+                auto_first_downbeat = 0.0
                 measure_markers = []
                 current_measure = auto_first_downbeat
                 while current_measure <= self.display_duration:
@@ -129,7 +137,7 @@ class DownbeatSelector:
                 
                 return auto_first_downbeat, measure_markers
             else:
-                return None, []
+                return 0.0, []
     
     def _setup_plot(self):
         """Setup the matplotlib plot with waveform and controls"""
@@ -165,7 +173,7 @@ class DownbeatSelector:
         if len(self.auto_measure_markers) > 0:
             legend_elements.append(plt.Line2D([0], [0], color='purple', alpha=0.6, linestyle='-', linewidth=1.5, label='Auto-detected measures'))
         if self.auto_first_downbeat is not None:
-            legend_elements.append(plt.Line2D([0], [0], color='blue', alpha=0.7, linestyle='-', linewidth=2, label='Suggested first downbeat'))
+            legend_elements.append(plt.Line2D([0], [0], color='blue', alpha=0.7, linestyle='-', linewidth=2, label='Suggested first downbeat (at 0:00)'))
         
         if legend_elements:
             self.ax_wave.legend(handles=legend_elements, loc='upper right')
@@ -177,7 +185,7 @@ class DownbeatSelector:
             f"• Detected BPM: {self.detected_bpm:.1f} - Showing first 5 seconds\n"
             "• Orange dotted lines: detected beats (softer guidance)\n"
             "• Purple lines: auto-detected measures (4-beat groups)\n" 
-            "• Blue line: suggested first downbeat (click to use or choose your own)\n"
+            "• Blue line: suggested first downbeat (at 0:00 - click to use or choose your own)\n"
             "• Step 1: Click on the first downbeat (red line)\n"
             "• Step 2: Click on a later downbeat to set BPM (green line)"
         )

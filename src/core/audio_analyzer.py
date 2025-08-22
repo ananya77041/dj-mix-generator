@@ -290,20 +290,82 @@ class AudioAnalyzer:
                 # Fallback: regular intervals starting from first beat
                 filtered_indices = list(range(0, len(beats), beats_per_measure))
             
-            # Convert to beat frame numbers
-            downbeats = beats[filtered_indices] if filtered_indices else np.array([])
-            
-            print(f"  Detected {len(downbeats)} downbeats using enhanced percussion analysis")
+            # ALWAYS place the first downbeat at exactly 0:00
+            # Calculate tempo based on the detected beat spacing
+            if len(beats) > 0:
+                # Calculate time positions of beats
+                beat_times = librosa.frames_to_time(beats, sr=sr, hop_length=512)
+                
+                # Determine the beat interval (time between beats) from detected beats
+                if len(beat_times) > 4:
+                    # Calculate intervals between consecutive beats
+                    beat_intervals = np.diff(beat_times)
+                    # Use median interval for robustness against detection errors
+                    median_beat_interval = np.median(beat_intervals)
+                    
+                    # Calculate BPM from beat interval
+                    calculated_bpm = 60.0 / median_beat_interval
+                    print(f"  Calculated BPM from beat spacing: {calculated_bpm:.1f}")
+                else:
+                    # Use the originally detected BPM as fallback
+                    calculated_bpm = bpm
+                    median_beat_interval = 60.0 / calculated_bpm
+                
+                # Generate downbeat pattern starting from exactly 0:00
+                downbeat_times = []
+                beats_per_measure = 4
+                measure_duration = median_beat_interval * beats_per_measure
+                
+                # Add downbeats at regular measure intervals starting from 0:00
+                current_time = 0.0
+                track_duration = len(audio) / sr
+                
+                while current_time < track_duration:
+                    downbeat_times.append(current_time)
+                    current_time += measure_duration
+                
+                # Convert downbeat times to frame positions
+                downbeats = librosa.time_to_frames(np.array(downbeat_times), sr=sr, hop_length=512)
+                
+                print(f"  Placed {len(downbeats)} downbeats starting at 0:00 with {measure_duration:.3f}s intervals")
+            else:
+                downbeats = np.array([])
             
             return downbeats
             
         except Exception as e:
             print(f"Warning: Enhanced downbeat detection failed: {e}")
-            # Fallback: use regular intervals
-            if len(beats) >= 4:
-                return beats[::4]  # Every 4th beat as downbeat
+            # Fallback: use regular intervals starting from exactly 0:00
+            if len(beats) > 0:
+                beat_times = librosa.frames_to_time(beats, sr=sr, hop_length=512)
+                
+                # Calculate beat interval from detected beats
+                if len(beat_times) > 4:
+                    beat_intervals = np.diff(beat_times)
+                    median_beat_interval = np.median(beat_intervals)
+                else:
+                    # Use original BPM as fallback
+                    median_beat_interval = 60.0 / bpm
+                
+                # Generate downbeats starting from exactly 0:00
+                beats_per_measure = 4
+                measure_duration = median_beat_interval * beats_per_measure
+                
+                downbeat_times = []
+                current_time = 0.0
+                track_duration = len(audio) / sr
+                
+                while current_time < track_duration:
+                    downbeat_times.append(current_time)
+                    current_time += measure_duration
+                
+                # Convert to frame positions
+                downbeats = librosa.time_to_frames(np.array(downbeat_times), sr=sr, hop_length=512)
+                
+                print(f"  Fallback: Placed {len(downbeats)} downbeats starting at 0:00 with {measure_duration:.3f}s intervals")
+                return downbeats
             else:
-                return np.array([beats[0]]) if len(beats) > 0 else np.array([])
+                return np.array([])
     
     def _get_manual_downbeats(self, audio: np.ndarray, sr: int, beats: np.ndarray, track_name: str, detected_bpm: float) -> tuple[np.ndarray, bool, float]:
         """
