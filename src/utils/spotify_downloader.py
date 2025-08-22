@@ -55,56 +55,31 @@ class SpotifyPlaylistDownloader:
         
         return url
     
-    def _get_playlist_metadata(self, spotify_url: str) -> Dict[str, Any]:
+    def _extract_playlist_name_from_output(self, output_text: str) -> Optional[str]:
         """
-        Get playlist metadata using spotdl save command
+        Extract playlist name from spotdl output text
         
         Args:
-            spotify_url: Spotify playlist URL or URI
+            output_text: Output text from spotdl command
             
         Returns:
-            Dictionary containing playlist metadata
-            
-        Raises:
-            ValueError: If metadata extraction fails
+            Playlist name if found, None otherwise
         """
-        try:
-            # Create temporary file for metadata
-            with tempfile.NamedTemporaryFile(mode='w', suffix='.spotdl', delete=False) as temp_file:
-                temp_metadata_file = temp_file.name
-            
-            # Run spotdl save command to get metadata
-            cmd = [
-                "spotdl",
-                "save",
-                spotify_url,
-                "--save-file", temp_metadata_file
-            ]
-            
-            result = subprocess.run(
-                cmd,
-                capture_output=True,
-                text=True
-            )
-            
-            if result.returncode != 0:
-                raise ValueError(f"Failed to get playlist metadata: {result.stderr}")
-            
-            # Read the metadata file
-            with open(temp_metadata_file, 'r', encoding='utf-8') as f:
-                metadata = json.load(f)
-            
-            # Clean up temp file
-            os.unlink(temp_metadata_file)
-            
-            return metadata
-            
-        except FileNotFoundError:
-            raise ValueError(
-                "spotdl is not installed. Install it with: pip install spotdl"
-            )
-        except Exception as e:
-            raise ValueError(f"Failed to get playlist metadata: {str(e)}")
+        # Look for playlist name patterns in the output
+        patterns = [
+            r"Found \d+ songs in (.+) \(Playlist\)",  # "Found 25 songs in Jazzy Disco Funk (Playlist)"
+            r"Playlist: (.+)",
+            r"Processing playlist: (.+)", 
+            r"Found playlist: (.+)",
+            r'"list_name":\s*"([^"]+)"',
+        ]
+        
+        for pattern in patterns:
+            match = re.search(pattern, output_text, re.IGNORECASE)
+            if match:
+                return match.group(1).strip()
+        
+        return None
     
     def _sanitize_directory_name(self, name: str) -> str:
         """
@@ -147,44 +122,25 @@ class SpotifyPlaylistDownloader:
             raise ValueError(f"Invalid Spotify playlist URL: {spotify_url}")
         
         normalized_url = self._normalize_spotify_url(spotify_url)
-        print(f"🎵 Getting playlist metadata: {normalized_url}")
+        print(f"🎵 Downloading Spotify playlist: {normalized_url}")
         
         try:
-            # Get playlist metadata to extract the name
-            metadata = self._get_playlist_metadata(normalized_url)
+            # Use spotdl's {list-name} variable to automatically create playlist directory
+            # This avoids the need for metadata extraction and is more robust
+            output_template = "{list-name}/{artists} - {title}.{output-ext}"
+            output_path = str(self.base_dir / output_template)
             
-            # Extract playlist name from metadata
-            if isinstance(metadata, list) and len(metadata) > 0:
-                # Get the list name from the first track's metadata
-                first_track = metadata[0]
-                self.playlist_name = first_track.get('list_name', 'Unknown Playlist')
-            else:
-                self.playlist_name = 'Unknown Playlist'
-            
-            # Sanitize the playlist name for directory use
-            sanitized_name = self._sanitize_directory_name(self.playlist_name)
-            
-            # Create download directory in the base directory
-            self.download_dir = self.base_dir / sanitized_name
-            self.download_dir.mkdir(parents=True, exist_ok=True)
-            
-            print(f"📁 Created directory: {self.download_dir}")
-            print(f"🎵 Downloading playlist: '{self.playlist_name}'")
-            
-            # Use spotdl's output template to organize files properly
-            output_template = "{artists} - {title}.{output-ext}"
-            
-            # Prepare spotdl download command
+            # Prepare spotdl download command with minimal options to avoid network issues
             cmd = [
                 "spotdl",
-                "download",
+                "download", 
                 normalized_url,
-                "--output", str(self.download_dir / output_template),
+                "--output", output_path,
                 "--format", format,
                 "--bitrate", "320k",  # High quality
-                "--threads", "4",     # Parallel downloads
+                "--threads", "1",     # Single thread to avoid rate limits
                 "--overwrite", "skip", # Skip existing files
-                "--playlist-numbering"  # Add track numbers for proper ordering
+                "--audio", "youtube"   # Explicitly use YouTube as audio source
             ]
             
             print("⬇️  Running spotdl download...")
@@ -200,11 +156,56 @@ class SpotifyPlaylistDownloader:
                 print(f"spotdl stderr: {result.stderr}")
                 raise ValueError(f"spotdl download failed: {result.stderr}")
             
-            # Find downloaded files in order
-            downloaded_files = self._get_downloaded_files(format)
+            print(f"spotdl output: {result.stdout}")
             
-            if not downloaded_files:
-                raise ValueError("No files were downloaded")
+            # Try to extract playlist name from the output for better user feedback
+            playlist_name = self._extract_playlist_name_from_output(result.stdout)
+            if not playlist_name:
+                playlist_name = "Unknown Playlist"
+            
+            self.playlist_name = playlist_name
+            
+            # Count how many songs were found vs downloaded
+            found_count = 0
+            download_count = 0
+            lookup_errors = 0
+            
+            lines = result.stdout.split('\n')
+            for line in lines:
+                if 'Found' in line and 'songs in' in line:
+                    try:
+                        found_count = int(line.split()[1])
+                    except:
+                        pass
+                elif 'Downloaded' in line:
+                    download_count += 1
+                elif 'LookupError: No results found' in line:
+                    lookup_errors += 1
+            
+            print(f"📊 Found {found_count} songs in playlist, {lookup_errors} failed to find on YouTube")
+            
+            # Find the created directory - look for directories that were just created
+            potential_dirs = []
+            for item in self.base_dir.iterdir():
+                if item.is_dir():
+                    # Check if this directory has audio files
+                    audio_files = self._get_downloaded_files_in_dir(item, format)
+                    if audio_files:
+                        potential_dirs.append((item, audio_files))
+            
+            if not potential_dirs:
+                if lookup_errors > 0 and download_count == 0:
+                    raise ValueError(
+                        f"No tracks were downloaded from playlist '{playlist_name}'. "
+                        f"All {lookup_errors} tracks failed to be found on YouTube. "
+                        f"This playlist contains tracks that are not available on YouTube or are too obscure. "
+                        f"Try a different playlist with more mainstream tracks."
+                    )
+                else:
+                    raise ValueError(f"No playlist directory with audio files was created for playlist '{playlist_name}'")
+            
+            # Use the directory with the most audio files (in case multiple exist)
+            self.download_dir, downloaded_files = max(potential_dirs, key=lambda x: len(x[1]))
             
             print(f"✅ Successfully downloaded {len(downloaded_files)} tracks to: {self.download_dir}")
             return downloaded_files
@@ -216,6 +217,34 @@ class SpotifyPlaylistDownloader:
         except Exception as e:
             raise ValueError(f"Failed to download playlist: {str(e)}")
     
+    def _get_downloaded_files_in_dir(self, directory: Path, format: str) -> List[str]:
+        """
+        Get list of downloaded files in a specific directory
+        
+        Args:
+            directory: Directory to search in
+            format: Audio format to look for
+            
+        Returns:
+            List of file paths in playlist order
+        """
+        # Find all audio files in the specified directory
+        audio_extensions = {format.lower(), "mp3", "wav", "flac", "m4a"}
+        audio_files = []
+        
+        if not directory.exists() or not directory.is_dir():
+            return audio_files
+        
+        for file_path in directory.iterdir():
+            if file_path.is_file() and file_path.suffix.lower().lstrip('.') in audio_extensions:
+                audio_files.append(str(file_path.absolute()))
+        
+        # Sort files by name to maintain playlist order
+        # spotdl typically downloads with consistent naming
+        audio_files.sort()
+        
+        return audio_files
+    
     def _get_downloaded_files(self, format: str) -> List[str]:
         """
         Get list of downloaded files in the correct order
@@ -226,19 +255,10 @@ class SpotifyPlaylistDownloader:
         Returns:
             List of file paths in playlist order
         """
-        # Find all audio files in download directory
-        audio_extensions = {format.lower(), "mp3", "wav", "flac", "m4a"}
-        audio_files = []
+        if not self.download_dir:
+            return []
         
-        for file_path in self.download_dir.iterdir():
-            if file_path.is_file() and file_path.suffix.lower().lstrip('.') in audio_extensions:
-                audio_files.append(str(file_path.absolute()))
-        
-        # Sort files by name to maintain playlist order
-        # spotdl typically downloads with consistent naming
-        audio_files.sort()
-        
-        return audio_files
+        return self._get_downloaded_files_in_dir(self.download_dir, format)
     
     def cleanup(self):
         """Clean up temporary download directory (only if it was a temp dir)"""
