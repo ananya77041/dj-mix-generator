@@ -5,6 +5,7 @@ scipy>=1.9.0
 matplotlib>=3.5.0
 sounddevice>=0.4.0
 dearpygui>=1.10.0
+spotdl>=4.2.0
 
 # Optional GUI backends for visual downbeat selection and interactive beatgrid alignment
 # Install one of these for --manual-downbeats and --interactive-beats to work:

@@ -35,6 +35,10 @@ class ArgumentParser:
         parser.add_argument('--demo', action='store_true',
                            help='Run demo mode with example tracks')
         
+        # Spotify playlist mode
+        parser.add_argument('--spotify-playlist', type=str, metavar='URL',
+                           help='Download and mix tracks from a Spotify playlist URL')
+        
         # Tempo strategies
         parser.add_argument('--tempo-strategy', choices=['sequential', 'uniform', 'match-track'],
                            default='match-track', help='Tempo alignment strategy (default: match-track)')
@@ -113,6 +117,9 @@ Examples:
   # Basic mixing
   python dj_mix_generator.py track1.wav track2.wav track3.wav
   
+  # Spotify playlist mixing with 16-measure transitions
+  python dj_mix_generator.py --spotify-playlist "https://open.spotify.com/playlist/..." --transition-measures 16
+  
   # Harmonic mixing with preview
   python dj_mix_generator.py --reorder-by-key --transitions-only track1.wav track2.wav
   
@@ -153,13 +160,18 @@ Examples:
         
         # Validate tracks
         if not args.demo and not args.cache_info and not args.clear_cache and not args.cleanup_cache:
-            if not args.tracks:
-                raise ValueError("No track files specified")
+            if not args.tracks and not args.spotify_playlist:
+                raise ValueError("No track files or Spotify playlist specified")
             
-            # Check if files exist
-            for track_path in args.tracks:
-                if not Path(track_path).exists():
-                    print(f"Warning: File not found: {track_path}")
+            # Check if both tracks and spotify playlist are provided
+            if args.tracks and args.spotify_playlist:
+                raise ValueError("Cannot specify both track files and Spotify playlist")
+            
+            # Check if files exist (only if not using Spotify playlist)
+            if args.tracks:
+                for track_path in args.tracks:
+                    if not Path(track_path).exists():
+                        print(f"Warning: File not found: {track_path}")
     
     def create_configuration(self, args: argparse.Namespace) -> MixConfiguration:
         """Create MixConfiguration from parsed arguments"""
@@ -261,5 +273,9 @@ def parse_command_line() -> tuple[MixConfiguration, List[str]]:
             "example_tracks/track3.wav"
         ]
         return parser.create_configuration(args), demo_tracks
+    
+    # Handle Spotify playlist mode
+    if args.spotify_playlist:
+        return parser.create_configuration(args), args.spotify_playlist
     
     return parser.create_configuration(args), args.tracks
