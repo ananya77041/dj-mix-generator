@@ -1469,27 +1469,20 @@ class MixGenerator:
             track2_lf = filtfilt(lp_b, lp_a, track2_intro)  # Track2 low frequencies  
             track2_hf = filtfilt(hp_b, hp_a, track2_intro)  # Track2 high frequencies
             
-            # Create blending curves for low frequencies
-            # At start: 100% track1 LF, 0% track2 LF
-            # At end: 0% track1 LF, 100% track2 LF
-            lf_blend_curve = np.linspace(0, 1, n_samples)  # 0->1 for track2 LF
-            lf_fade_curve = np.linspace(1, 0, n_samples)   # 1->0 for track1 LF
+            # Create LINEAR blending curves for ALL frequency bands
+            # At start: 100% track1, 0% track2
+            # At end: 0% track1, 100% track2
+            linear_fade_out = np.linspace(1, 0, n_samples)  # 1->0 for track1 (all bands)
+            linear_fade_in = np.linspace(0, 1, n_samples)   # 0->1 for track2 (all bands)
             
-            # Blend low frequencies gradually
-            blended_lf = track1_lf * lf_fade_curve + track2_lf * lf_blend_curve
-            
-            # For high frequencies, use normal crossfade curves
-            hf_fade_out = np.cos(np.linspace(0, np.pi/2, n_samples))**2  # track1 HF fade out
-            hf_fade_in = np.sin(np.linspace(0, np.pi/2, n_samples))**2   # track2 HF fade in
-            
-            # Process track1: gradually reduce LF, normal HF fadeout
-            track1_lf_processed = track1_lf * lf_fade_curve
-            track1_hf_processed = track1_hf * hf_fade_out
+            # Process track1: linear fade out for ALL frequencies
+            track1_lf_processed = track1_lf * linear_fade_out
+            track1_hf_processed = track1_hf * linear_fade_out
             track1_processed = track1_lf_processed + track1_hf_processed
             
-            # Process track2: gradually increase LF, normal HF fadein  
-            track2_lf_processed = track2_lf * lf_blend_curve
-            track2_hf_processed = track2_hf * hf_fade_in
+            # Process track2: linear fade in for ALL frequencies
+            track2_lf_processed = track2_lf * linear_fade_in
+            track2_hf_processed = track2_hf * linear_fade_in
             track2_processed = track2_lf_processed + track2_hf_processed
             
             print(f"    Low-frequency blending applied (cutoff: {lf_cutoff} Hz)")
@@ -1553,26 +1546,22 @@ class MixGenerator:
             track2_mf = filtfilt(bp_b, bp_a, track2_intro)  # Track2 mid frequencies
             track2_hf = filtfilt(hp_b, hp_a, track2_intro)  # Track2 high frequencies
             
-            # Create blending curves for mid frequencies
-            # At start: 100% track1 MF, 0% track2 MF  
-            # At end: 0% track1 MF, 100% track2 MF
-            mf_blend_curve = np.linspace(0, 1, n_samples)  # 0->1 for track2 MF
-            mf_fade_curve = np.linspace(1, 0, n_samples)   # 1->0 for track1 MF
+            # Create LINEAR blending curves for ALL frequency bands
+            # At start: 100% track1, 0% track2
+            # At end: 0% track1, 100% track2
+            linear_fade_out = np.linspace(1, 0, n_samples)  # 1->0 for track1 (all bands)
+            linear_fade_in = np.linspace(0, 1, n_samples)   # 0->1 for track2 (all bands)
             
-            # For low and high frequencies, use normal crossfade curves
-            normal_fade_out = np.cos(np.linspace(0, np.pi/2, n_samples))**2  # Normal fade out
-            normal_fade_in = np.sin(np.linspace(0, np.pi/2, n_samples))**2   # Normal fade in
-            
-            # Process track1: gradual MF fade out, normal LF/HF fadeout
-            track1_lf_processed = track1_lf * normal_fade_out
-            track1_mf_processed = track1_mf * mf_fade_curve
-            track1_hf_processed = track1_hf * normal_fade_out
+            # Process track1: linear fade out for ALL frequencies
+            track1_lf_processed = track1_lf * linear_fade_out
+            track1_mf_processed = track1_mf * linear_fade_out
+            track1_hf_processed = track1_hf * linear_fade_out
             track1_processed = track1_lf_processed + track1_mf_processed + track1_hf_processed
             
-            # Process track2: gradual MF fade in, normal LF/HF fadein
-            track2_lf_processed = track2_lf * normal_fade_in
-            track2_mf_processed = track2_mf * mf_blend_curve
-            track2_hf_processed = track2_hf * normal_fade_in
+            # Process track2: linear fade in for ALL frequencies
+            track2_lf_processed = track2_lf * linear_fade_in
+            track2_mf_processed = track2_mf * linear_fade_in
+            track2_hf_processed = track2_hf * linear_fade_in
             track2_processed = track2_lf_processed + track2_mf_processed + track2_hf_processed
             
             print(f"    Mid-frequency blending applied (range: {lf_cutoff}-{hf_cutoff} Hz)")
@@ -1648,25 +1637,22 @@ class MixGenerator:
             track2_mf = filtfilt(bp_b, bp_a, track2_intro)    # Mid frequencies (melody)
             track2_hf = filtfilt(hp_b, hp_a, track2_intro)    # High frequencies (treble)
             
-            # Create gradual blending curves for high frequencies
-            # High frequencies fade more gradually for crisp transitions
-            hf_fade_curve = np.cos(np.linspace(0, np.pi/2, n_samples))**1.5      # Slower HF fade out
-            hf_blend_curve = np.sin(np.linspace(0, np.pi/2, n_samples))**1.5     # Slower HF blend in
+            # Create LINEAR blending curves for ALL frequency bands
+            # At start: 100% track1, 0% track2
+            # At end: 0% track1, 100% track2
+            linear_fade_out = np.linspace(1, 0, n_samples)  # 1->0 for track1 (all bands)
+            linear_fade_in = np.linspace(0, 1, n_samples)   # 0->1 for track2 (all bands)
             
-            # For low and mid frequencies, use normal crossfade curves
-            normal_fade_out = np.cos(np.linspace(0, np.pi/2, n_samples))**2  # Normal fade out
-            normal_fade_in = np.sin(np.linspace(0, np.pi/2, n_samples))**2   # Normal fade in
-            
-            # Process track1: gradual HF fade out, normal LF/MF fadeout
-            track1_lf_processed = track1_lf * normal_fade_out
-            track1_mf_processed = track1_mf * normal_fade_out  
-            track1_hf_processed = track1_hf * hf_fade_curve
+            # Process track1: linear fade out for ALL frequencies
+            track1_lf_processed = track1_lf * linear_fade_out
+            track1_mf_processed = track1_mf * linear_fade_out  
+            track1_hf_processed = track1_hf * linear_fade_out
             track1_processed = track1_lf_processed + track1_mf_processed + track1_hf_processed
             
-            # Process track2: gradual HF fade in, normal LF/MF fadein
-            track2_lf_processed = track2_lf * normal_fade_in
-            track2_mf_processed = track2_mf * normal_fade_in
-            track2_hf_processed = track2_hf * hf_blend_curve  
+            # Process track2: linear fade in for ALL frequencies
+            track2_lf_processed = track2_lf * linear_fade_in
+            track2_mf_processed = track2_mf * linear_fade_in
+            track2_hf_processed = track2_hf * linear_fade_in  
             track2_processed = track2_lf_processed + track2_mf_processed + track2_hf_processed
             
             print(f"    High-frequency blending applied (range: {mf_cutoff}-{hf_cutoff} Hz)")
