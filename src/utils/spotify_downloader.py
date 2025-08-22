@@ -243,29 +243,63 @@ class SpotifyPlaylistDownloader:
                     lookup_errors += 1
             
             print(f"📊 Found {found_count} songs in playlist, {lookup_errors} failed to find on YouTube/SoundCloud")
+            print(f"🎵 Extracted playlist name: '{playlist_name}'")
             
-            # Find the created directory - look for directories that were just created
-            potential_dirs = []
-            for item in self.base_dir.iterdir():
-                if item.is_dir():
-                    # Check if this directory has audio files
-                    audio_files = self._get_downloaded_files_in_dir(item, format)
-                    if audio_files:
-                        potential_dirs.append((item, audio_files))
+            # Find the directory that matches the requested playlist name
+            target_dir = None
+            downloaded_files = []
             
-            if not potential_dirs:
-                if lookup_errors > 0 and download_count == 0:
-                    raise ValueError(
-                        f"No tracks were downloaded from playlist '{playlist_name}'. "
-                        f"All {lookup_errors} tracks failed to be found on YouTube Music, YouTube, or SoundCloud. "
-                        f"This playlist contains tracks that are not available on any of these platforms or are too obscure. "
-                        f"Try a different playlist with more mainstream tracks."
-                    )
-                else:
-                    raise ValueError(f"No playlist directory with audio files was created for playlist '{playlist_name}'")
+            # First try to find a directory that matches the extracted playlist name
+            if playlist_name and playlist_name != "Unknown Playlist":
+                # Try exact match first
+                expected_path = self.base_dir / playlist_name
+                if expected_path.exists() and expected_path.is_dir():
+                    downloaded_files = self._get_downloaded_files_in_dir(expected_path, format)
+                    if downloaded_files:
+                        target_dir = expected_path
+                        print(f"✅ Found playlist directory: {playlist_name}")
+                
+                # If no exact match, try fuzzy matching (in case of slight name differences)
+                if not target_dir:
+                    for item in self.base_dir.iterdir():
+                        if item.is_dir():
+                            # Check for partial name match (case insensitive)
+                            if playlist_name.lower() in item.name.lower() or item.name.lower() in playlist_name.lower():
+                                audio_files = self._get_downloaded_files_in_dir(item, format)
+                                if audio_files:
+                                    target_dir = item
+                                    downloaded_files = audio_files
+                                    print(f"✅ Found matching playlist directory: {item.name}")
+                                    break
             
-            # Use the directory with the most audio files (in case multiple exist)
-            self.download_dir, downloaded_files = max(potential_dirs, key=lambda x: len(x[1]))
+            # If still no match, fall back to looking for any directory with audio files
+            # but warn the user about the potential mismatch
+            if not target_dir:
+                potential_dirs = []
+                for item in self.base_dir.iterdir():
+                    if item.is_dir():
+                        audio_files = self._get_downloaded_files_in_dir(item, format)
+                        if audio_files:
+                            potential_dirs.append((item, audio_files))
+                
+                if not potential_dirs:
+                    if lookup_errors > 0 and download_count == 0:
+                        raise ValueError(
+                            f"No tracks were downloaded from playlist '{playlist_name}'. "
+                            f"All {lookup_errors} tracks failed to be found on YouTube Music, YouTube, or SoundCloud. "
+                            f"This playlist contains tracks that are not available on any of these platforms or are too obscure. "
+                            f"Try a different playlist with more mainstream tracks."
+                        )
+                    else:
+                        raise ValueError(f"No playlist directory with audio files was created for playlist '{playlist_name}'")
+                
+                # Use the directory with the most audio files as fallback, but warn user
+                target_dir, downloaded_files = max(potential_dirs, key=lambda x: len(x[1]))
+                print(f"⚠️  Warning: Could not find directory for playlist '{playlist_name}'")
+                print(f"⚠️  Using fallback directory: {target_dir.name} ({len(downloaded_files)} tracks)")
+                print(f"⚠️  This may not be the playlist you requested!")
+            
+            self.download_dir = target_dir
             
             print(f"✅ Successfully downloaded {len(downloaded_files)} tracks to: {self.download_dir}")
             return downloaded_files
