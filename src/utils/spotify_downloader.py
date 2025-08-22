@@ -104,6 +104,35 @@ class SpotifyPlaylistDownloader:
         
         return sanitized
     
+    def _check_for_existing_tracks(self, format: str):
+        """
+        Check for existing playlist directories and provide feedback about existing tracks
+        
+        Args:
+            format: Audio format to look for
+        """
+        # Look for potential playlist directories
+        potential_dirs = []
+        audio_extensions = {format.lower(), "mp3", "wav", "flac", "m4a"}
+        
+        for item in self.base_dir.iterdir():
+            if item.is_dir():
+                # Check if this directory has audio files
+                audio_files = []
+                for file_path in item.iterdir():
+                    if file_path.is_file() and file_path.suffix.lower().lstrip('.') in audio_extensions:
+                        audio_files.append(file_path.name)
+                
+                if audio_files:
+                    potential_dirs.append((item.name, len(audio_files)))
+        
+        if potential_dirs:
+            print("📁 Found existing playlist directories:")
+            for dir_name, count in sorted(potential_dirs):
+                print(f"   • {dir_name}: {count} tracks")
+            print("🔄 Will skip any tracks that already exist")
+            print()
+    
     def download_playlist(self, spotify_url: str, format: str = "wav") -> List[str]:
         """
         Download a Spotify playlist to local audio files
@@ -130,6 +159,9 @@ class SpotifyPlaylistDownloader:
             output_template = "{list-name}/{artists} - {title}.{output-ext}"
             output_path = str(self.base_dir / output_template)
             
+            # Check for existing playlist directories and provide feedback
+            self._check_for_existing_tracks(format)
+            
             # Prepare spotdl download command with multiple audio sources and highest quality
             cmd = [
                 "spotdl",
@@ -139,7 +171,7 @@ class SpotifyPlaylistDownloader:
                 "--format", format,
                 "--bitrate", "auto",    # Use highest available bitrate
                 "--threads", "2",       # Moderate threading for stability
-                "--overwrite", "skip",  # Skip existing files
+                "--overwrite", "skip",  # Skip existing files (simpler approach)
                 "--audio", "youtube-music", "youtube", "soundcloud",  # Multiple fallback sources
                 "--config"              # Use the config file we modified
             ]
@@ -147,6 +179,7 @@ class SpotifyPlaylistDownloader:
             print("⬇️  Running spotdl download with multiple audio sources...")
             print("🎵 Audio sources: YouTube Music → YouTube → SoundCloud")
             print(f"🎧 Format: {format.upper()} (highest quality available)")
+            print("🔄 Existing files will be automatically skipped")
             print("📥 Download progress:")
             print("-" * 80)
             
