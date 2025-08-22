@@ -77,6 +77,9 @@ class MixConfiguration:
     # System settings
     use_cache: bool = True
     
+    # Track timing settings
+    custom_play_time: Optional[float] = None
+    
     def __post_init__(self):
         if self.transition_settings is None:
             self.transition_settings = TransitionSettings()
@@ -87,6 +90,9 @@ class MixConfiguration:
         """Validate complete configuration"""
         self.transition_settings.validate()
         self.audio_quality.validate()
+        
+        if self.custom_play_time is not None and self.custom_play_time < 30.0:
+            raise ValueError("Custom play time must be at least 30 seconds")
 
 
 class AudioConstants:
