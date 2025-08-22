@@ -32,6 +32,9 @@ class MixGenerator:
                  enable_eq_matching: bool = True, enable_volume_matching: bool = True, eq_strength: float = 0.5,
                  enable_peak_alignment: bool = True, enable_tempo_correction: bool = True, enable_lf_transition: bool = False, enable_mf_transition: bool = False, enable_hf_transition: bool = False, transition_downbeats: bool = False):
         
+        # Store config for later use
+        self.config = config
+        
         # Handle new config object approach
         if config is not None:
             # Extract settings from MixConfiguration object
@@ -2001,6 +2004,10 @@ class MixGenerator:
         # Initialize metadata collection for this mix
         self._initialize_metadata(tracks, transition_mode, transitions_only)
         
+        # Apply custom play time if specified
+        if hasattr(self, 'config') and hasattr(self.config, 'custom_play_time') and self.config.custom_play_time is not None:
+            tracks = self._apply_custom_play_time(tracks, self.config.custom_play_time, transition_duration, transition_measures)
+        
         if transitions_only:
             return self._generate_transitions_only(tracks, output_path, transition_duration, transition_measures)
         
@@ -2709,6 +2716,87 @@ class MixGenerator:
             self.mix_metadata['transitions'].append(trans_info)
             
             current_time += transition_duration + buffer_duration
+    
+    def _apply_custom_play_time(self, tracks: List[Track], custom_play_time: float, transition_duration: float, transition_measures: int) -> List[Track]:
+        """Apply custom play time to tracks by cutting them to the specified duration"""
+        cut_tracks = []
+        
+        print(f"📏 Applying custom play time: {int(custom_play_time // 60)}:{int(custom_play_time % 60):02d} per track")
+        print("📝 Track cutting details:")
+        
+        for i, track in enumerate(tracks):
+            if track.duration <= custom_play_time:
+                # Track is already short enough, keep as-is
+                cut_tracks.append(track)
+                print(f"   • {track.filepath.name}: Keeping full duration ({track.duration:.1f}s)")
+                continue
+            
+            # Calculate the cut point considering transition requirements
+            # We need to cut the track but leave room for the transition at the end
+            if transition_measures is not None:
+                # Calculate transition duration based on track's BPM
+                beats_per_measure = 4
+                total_beats = transition_measures * beats_per_measure
+                transition_duration_for_track = (total_beats * 60.0) / track.bpm
+            else:
+                transition_duration_for_track = transition_duration or 30.0
+            
+            # Ensure we have enough audio for the transition
+            if custom_play_time < transition_duration_for_track * 2:
+                print(f"   ⚠️  Warning: Custom play time {custom_play_time:.1f}s is very short for transitions ({transition_duration_for_track:.1f}s)")
+            
+            # Cut the track to custom play time
+            cut_samples = int(custom_play_time * track.sr)
+            cut_audio = track.audio[:cut_samples]
+            
+            # Find the transition start point (transition_duration back from the new end)
+            transition_start_seconds = custom_play_time - transition_duration_for_track
+            transition_start_samples = int(transition_start_seconds * track.sr)
+            
+            # Find the closest downbeat to the transition start point
+            transition_start_downbeat = None
+            if len(track.downbeats) > 0:
+                # Convert downbeat times to sample indices
+                downbeat_samples = track.downbeats * track.sr
+                
+                # Find the downbeat closest to but not exceeding our transition start point
+                valid_downbeats = downbeat_samples[downbeat_samples <= transition_start_samples]
+                if len(valid_downbeats) > 0:
+                    closest_downbeat_idx = np.argmin(np.abs(valid_downbeats - transition_start_samples))
+                    transition_start_downbeat = valid_downbeats[closest_downbeat_idx] / track.sr
+                else:
+                    # No suitable downbeat found, use calculated position
+                    transition_start_downbeat = transition_start_seconds
+            else:
+                transition_start_downbeat = transition_start_seconds
+            
+            # Update downbeats to only include those within the cut duration
+            if len(track.downbeats) > 0:
+                cut_downbeats = track.downbeats[track.downbeats <= custom_play_time]
+            else:
+                cut_downbeats = track.downbeats
+            
+            # Update beats similarly
+            if len(track.beats) > 0:
+                cut_beats = track.beats[track.beats <= custom_play_time]
+            else:
+                cut_beats = track.beats
+            
+            # Create new track with cut audio and updated timing
+            cut_track = self._create_track_from_existing(
+                track, 
+                new_audio=cut_audio, 
+                new_beats=cut_beats,
+                new_downbeats=cut_downbeats
+            )
+            
+            cut_tracks.append(cut_track)
+            
+            original_duration = track.duration
+            print(f"   ✂️  {track.filepath.name}: Cut from {original_duration:.1f}s to {custom_play_time:.1f}s (transition starts at {transition_start_downbeat:.1f}s)")
+        
+        print(f"✅ Applied custom play time to {len(tracks)} tracks\n")
+        return cut_tracks
     
     def _format_time(self, seconds: float) -> str:
         """Format seconds as MM:SS.s"""

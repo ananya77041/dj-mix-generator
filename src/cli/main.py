@@ -161,6 +161,10 @@ class DJMixGeneratorCLI:
         
         print(f"Successfully loaded {len(self.tracks)} tracks.\\n")
         
+        # Filter tracks based on custom play time if specified
+        if self.config.custom_play_time is not None:
+            self._filter_tracks_by_duration()
+        
         # Sort tracks by BPM and key for optimal mixing flow
         self._sort_tracks_by_bpm_and_key()
     
@@ -261,6 +265,35 @@ class DJMixGeneratorCLI:
             self.tracks.append(track_results[i])
         
         print(f"\\nParallel analysis completed: {len(self.tracks)} tracks loaded")
+    
+    def _filter_tracks_by_duration(self):
+        """Filter out tracks shorter than custom play time"""
+        if not self.config.custom_play_time:
+            return
+        
+        original_count = len(self.tracks)
+        filtered_tracks = []
+        excluded_tracks = []
+        
+        for track in self.tracks:
+            if track.duration >= self.config.custom_play_time:
+                filtered_tracks.append(track)
+            else:
+                excluded_tracks.append(track)
+        
+        self.tracks = filtered_tracks
+        
+        if excluded_tracks:
+            print(f"📏 Custom play time: {int(self.config.custom_play_time // 60)}:{int(self.config.custom_play_time % 60):02d}")
+            print(f"🚫 Excluded {len(excluded_tracks)} tracks shorter than custom play time:")
+            for track in excluded_tracks:
+                duration_min = int(track.duration // 60)
+                duration_sec = int(track.duration % 60)
+                print(f"   • {track.filepath.name}: {duration_min}:{duration_sec:02d} (too short)")
+            print(f"✅ Kept {len(self.tracks)} tracks for mixing\\n")
+        
+        if not self.tracks:
+            raise ValueError(f"No tracks are longer than the specified custom play time ({int(self.config.custom_play_time // 60)}:{int(self.config.custom_play_time % 60):02d})!")
     
     def _sort_tracks_by_bpm_and_key(self):
         """Sort tracks by BPM (ascending), then by key within same BPM"""

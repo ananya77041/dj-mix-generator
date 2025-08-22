@@ -96,6 +96,8 @@ class ArgumentParser:
                                   help='Use interactive beatgrid alignment GUI')
         advanced_group.add_argument('--transition-downbeats', action='store_true',
                                   help='Use interactive GUI to select downbeats for transitions')
+        advanced_group.add_argument('--custom-play-time', type=str, metavar='MM:SS',
+                                  help='Custom play time per track (e.g., 2:30). Tracks shorter than this will be excluded.')
         
         # Cache settings
         cache_group = parser.add_argument_group('Cache Management')
@@ -128,6 +130,9 @@ Examples:
   
   # Manual precision
   python dj_mix_generator.py --manual-downbeats --transition-downbeats track1.wav track2.wav
+  
+  # Custom play time (2 minutes per track)
+  python dj_mix_generator.py --custom-play-time=2:00 --transition-measures=8 track1.wav track2.wav track3.wav
         """
     
     def parse_args(self, args: Optional[List[str]] = None) -> argparse.Namespace:
@@ -156,6 +161,10 @@ Examples:
         if args.random_order is not None and args.random_order < 1:
             raise ValueError("Random order must select at least 1 track")
         
+        # Validate custom play time format
+        if args.custom_play_time is not None:
+            self._validate_time_format(args.custom_play_time)
+        
         # Note: Both frequency transitions can be enabled simultaneously
         
         # Validate tracks
@@ -172,6 +181,40 @@ Examples:
                 for track_path in args.tracks:
                     if not Path(track_path).exists():
                         print(f"Warning: File not found: {track_path}")
+    
+    def _validate_time_format(self, time_str: str):
+        """Validate MM:SS time format and return seconds"""
+        try:
+            if ':' not in time_str:
+                raise ValueError("Time format must be MM:SS")
+            
+            parts = time_str.split(':')
+            if len(parts) != 2:
+                raise ValueError("Time format must be MM:SS")
+            
+            minutes = int(parts[0])
+            seconds = int(parts[1])
+            
+            if minutes < 0 or seconds < 0 or seconds >= 60:
+                raise ValueError("Invalid time values")
+            
+            total_seconds = minutes * 60 + seconds
+            if total_seconds < 30:
+                raise ValueError("Custom play time must be at least 30 seconds")
+            
+            return total_seconds
+            
+        except ValueError as e:
+            if "invalid literal" in str(e):
+                raise ValueError("Time format must be MM:SS with valid numbers")
+            raise e
+    
+    def _parse_time_to_seconds(self, time_str: str) -> float:
+        """Parse MM:SS format to seconds"""
+        parts = time_str.split(':')
+        minutes = int(parts[0])
+        seconds = int(parts[1])
+        return minutes * 60 + seconds
     
     def create_configuration(self, args: argparse.Namespace) -> MixConfiguration:
         """Create MixConfiguration from parsed arguments"""
@@ -215,6 +258,11 @@ Examples:
         if args.eq_strength == 0.0:
             audio_quality.eq_matching = False
         
+        # Parse custom play time if provided
+        custom_play_time_seconds = None
+        if args.custom_play_time:
+            custom_play_time_seconds = self._parse_time_to_seconds(args.custom_play_time)
+        
         # Create main configuration
         config = MixConfiguration(
             tempo_strategy=tempo_strategy,
@@ -227,7 +275,8 @@ Examples:
             manual_downbeats=args.manual_downbeats,
             allow_irregular_tempo=args.irregular_tempo,
             transitions_only=args.transitions_only,
-            use_cache=not args.no_cache
+            use_cache=not args.no_cache,
+            custom_play_time=custom_play_time_seconds
         )
         
         # Validate the complete configuration
