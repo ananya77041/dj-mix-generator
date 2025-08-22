@@ -7,6 +7,7 @@ import librosa
 import soundfile as sf
 import numpy as np
 import os
+from datetime import datetime
 from typing import List, Tuple
 try:
     from .models import Track, BeatInfo, KeyInfo
@@ -50,6 +51,15 @@ class MixGenerator:
         self.tempo_strategy = tempo_strategy
         self.target_bpm = None  # Will be set based on strategy
         self.interactive_beats = interactive_beats
+        
+        # Metadata tracking for mix generation
+        self.mix_metadata = {
+            'tracks': [],
+            'transitions': [],
+            'mix_info': {},
+            'generation_time': None,
+            'sample_rate': None
+        }
         
         # Audio quality settings
         self.enable_eq_matching = enable_eq_matching
@@ -1988,6 +1998,9 @@ class MixGenerator:
         print(f"Transition length: {transition_mode}")
         print(f"Tempo strategy: {self.tempo_strategy}\n")
         
+        # Initialize metadata collection for this mix
+        self._initialize_metadata(tracks, transition_mode, transitions_only)
+        
         if transitions_only:
             return self._generate_transitions_only(tracks, output_path, transition_duration, transition_measures)
         
@@ -2217,6 +2230,13 @@ class MixGenerator:
         sf.write(output_path, mix_audio, current_sr)
         
         duration_minutes = len(mix_audio) / current_sr / 60
+        total_duration_seconds = len(mix_audio) / current_sr
+        
+        # Generate metadata file
+        self.mix_metadata['sample_rate'] = current_sr
+        self._calculate_track_timing(processed_tracks, transition_duration, current_sr)
+        self._generate_metadata_file(output_path, total_duration_seconds)
+        
         print(f"\nMix complete! 🎵")
         print(f"Duration: {duration_minutes:.1f} minutes")
         print(f"Sample rate: {current_sr} Hz")
@@ -2580,6 +2600,13 @@ class MixGenerator:
         sf.write(output_path, final_mix, current_sr)
         
         duration_minutes = len(final_mix) / current_sr / 60
+        total_duration_seconds = len(final_mix) / current_sr
+        
+        # Generate metadata file for transitions-only mix
+        self.mix_metadata['sample_rate'] = current_sr
+        self._calculate_transitions_timing(all_transitions, current_sr)
+        self._generate_metadata_file(output_path, total_duration_seconds)
+        
         print(f"\n🎵 Transitions preview complete!")
         print(f"Contains {len(all_transitions)} transitions with 2-measure buffers")
         print(f"Duration: {duration_minutes:.1f} minutes")
@@ -2587,3 +2614,194 @@ class MixGenerator:
         print(f"File size: {os.path.getsize(output_path) / (1024*1024):.1f} MB")
         print(f"Each transition includes 2 measures before (primary track) + transition + 2 measures after (secondary track)")
         print("Listen to this file to test transition quality before generating full mix!")
+    
+    def _initialize_metadata(self, tracks: List[Track], transition_mode: str, transitions_only: bool):
+        """Initialize metadata collection for the current mix"""
+        self.mix_metadata = {
+            'tracks': [],
+            'transitions': [],
+            'mix_info': {
+                'tempo_strategy': str(self.tempo_strategy),
+                'transition_info': transition_mode,
+                'transitions_only': transitions_only,
+                'target_bpm': self.target_bpm
+            },
+            'generation_time': datetime.now().strftime('%Y-%m-%d %H:%M:%S'),
+            'sample_rate': None
+        }
+        
+        # Initialize track info with basic data
+        for track in tracks:
+            track_info = self._extract_track_info(track)
+            self.mix_metadata['tracks'].append(track_info)
+    
+    def _calculate_track_timing(self, processed_tracks: List[Track], transition_duration: float, sample_rate: int):
+        """Calculate timing for each track in the full mix"""
+        current_time = 0.0
+        
+        for i, track in enumerate(processed_tracks):
+            if i < len(self.mix_metadata['tracks']):
+                track_info = self.mix_metadata['tracks'][i]
+                
+                if i == 0:
+                    # First track starts at 0:00
+                    track_info['start_time'] = 0.0
+                    # First track plays until the transition starts
+                    track_duration = len(track.audio) / sample_rate
+                    track_info['end_time'] = track_duration - (transition_duration / 2) if i < len(processed_tracks) - 1 else track_duration
+                    current_time = track_info['end_time'] + transition_duration
+                else:
+                    # Subsequent tracks start in the middle of the transition
+                    track_info['start_time'] = current_time - (transition_duration / 2)
+                    
+                    if i == len(processed_tracks) - 1:
+                        # Last track plays to the end
+                        track_duration = len(track.audio) / sample_rate
+                        track_info['end_time'] = current_time - (transition_duration / 2) + track_duration
+                    else:
+                        # Other tracks end when the next transition starts
+                        track_duration = len(track.audio) / sample_rate
+                        track_info['end_time'] = current_time - (transition_duration / 2) + track_duration - (transition_duration / 2)
+                        current_time = track_info['end_time'] + transition_duration
+                
+                # Add tempo stretch information if the track was stretched
+                if hasattr(track, 'original_bpm') and track.original_bpm != track.bpm:
+                    track_info['stretched_bpm'] = track.bpm
+                    track_info['original_bpm'] = track.original_bpm
+    
+    def _calculate_transitions_timing(self, transitions: List, sample_rate: int):
+        """Calculate timing for transitions-only mix"""
+        current_time = 0.0
+        buffer_duration = 2.0  # 2-second buffer between transitions
+        
+        for i, transition_audio in enumerate(transitions):
+            transition_duration = len(transition_audio) / sample_rate
+            
+            # In transitions-only mode, each transition contains both tracks
+            # The transition represents the overlap between track i and track i+1
+            if i < len(self.mix_metadata['tracks']) - 1:
+                # Track i (outgoing track)
+                track1_info = self.mix_metadata['tracks'][i]
+                track1_info['start_time'] = current_time
+                track1_info['end_time'] = current_time + transition_duration
+                
+                # Track i+1 (incoming track) 
+                track2_info = self.mix_metadata['tracks'][i+1]
+                track2_info['start_time'] = current_time + (transition_duration / 2)  # Starts mid-transition
+                track2_info['end_time'] = current_time + transition_duration
+            
+            # Record transition info
+            trans_info = {
+                'start_time': current_time,
+                'end_time': current_time + transition_duration,
+                'duration': transition_duration,
+                'type': 'preview_transition',
+                'features': []
+            }
+            
+            if self.enable_lf_transition:
+                trans_info['features'].append('Low-frequency blending')
+            if self.enable_mf_transition:
+                trans_info['features'].append('Mid-frequency blending')
+            if self.enable_hf_transition:
+                trans_info['features'].append('High-frequency blending')
+            
+            self.mix_metadata['transitions'].append(trans_info)
+            
+            current_time += transition_duration + buffer_duration
+    
+    def _format_time(self, seconds: float) -> str:
+        """Format seconds as MM:SS.s"""
+        minutes = int(seconds // 60)
+        secs = seconds % 60
+        return f"{minutes}:{secs:04.1f}"
+    
+    def _extract_track_info(self, track: Track) -> dict:
+        """Extract track information for metadata"""
+        # Extract artist and title from filename
+        filename = os.path.splitext(os.path.basename(track.filepath))[0]
+        
+        # Try to parse "Artist - Title" format
+        if ' - ' in filename:
+            parts = filename.split(' - ', 1)
+            artist = parts[0].strip()
+            title = parts[1].strip()
+        else:
+            artist = "Unknown Artist"
+            title = filename
+        
+        return {
+            'artist': artist,
+            'title': title,
+            'filepath': str(track.filepath),
+            'original_bpm': track.bpm,
+            'key': getattr(track, 'key', None),
+            'start_time': 0.0,  # Will be set later
+            'end_time': 0.0     # Will be set later
+        }
+    
+    def _generate_metadata_file(self, output_path: str, total_duration: float):
+        """Generate metadata text file with track information and timing"""
+        metadata_path = output_path.rsplit('.', 1)[0] + '_metadata.txt'
+        
+        try:
+            with open(metadata_path, 'w', encoding='utf-8') as f:
+                # Header
+                f.write("DJ MIX METADATA\n")
+                f.write("=" * 50 + "\n")
+                f.write(f"Generated: {self.mix_metadata['generation_time']}\n")
+                f.write(f"Mix Duration: {self._format_time(total_duration)}\n") 
+                f.write(f"Total Tracks: {len(self.mix_metadata['tracks'])}\n")
+                f.write(f"Tempo Strategy: {self.mix_metadata['mix_info'].get('tempo_strategy', 'N/A')}\n")
+                f.write(f"Transition Length: {self.mix_metadata['mix_info'].get('transition_info', 'N/A')}\n")
+                f.write(f"Sample Rate: {self.mix_metadata['sample_rate']} Hz\n")
+                
+                # Track listing
+                f.write("\nTRACK LISTING:\n")
+                f.write("=" * 50 + "\n")
+                
+                for i, track_info in enumerate(self.mix_metadata['tracks']):
+                    f.write(f"\nTrack {i+1}: {track_info['artist']} - {track_info['title']}\n")
+                    f.write(f"  File: {track_info['filepath']}\n")
+                    
+                    # BPM information
+                    if 'stretched_bpm' in track_info and track_info['stretched_bpm'] != track_info['original_bpm']:
+                        f.write(f"  BPM: {track_info['stretched_bpm']:.1f} (stretched from {track_info['original_bpm']:.1f})\n")
+                    else:
+                        f.write(f"  BPM: {track_info['original_bpm']:.1f}\n")
+                    
+                    # Key information
+                    if track_info.get('key'):
+                        f.write(f"  Key: {track_info['key']}\n")
+                    
+                    # Timing information
+                    f.write(f"  Start: {self._format_time(track_info['start_time'])}")
+                    if i > 0:
+                        f.write(" (starts in transition)")
+                    f.write("\n")
+                    f.write(f"  End: {self._format_time(track_info['end_time'])}\n")
+                    
+                    duration_in_mix = track_info['end_time'] - track_info['start_time']
+                    f.write(f"  Duration in Mix: {self._format_time(duration_in_mix)}\n")
+                
+                # Transition details
+                if self.mix_metadata['transitions']:
+                    f.write("\nTRANSITION DETAILS:\n")
+                    f.write("=" * 50 + "\n")
+                    
+                    for i, trans_info in enumerate(self.mix_metadata['transitions']):
+                        f.write(f"\nTransition {i+1}→{i+2}: {self._format_time(trans_info['start_time'])} - {self._format_time(trans_info['end_time'])} ({trans_info['duration']:.1f}s)\n")
+                        f.write(f"  Type: {trans_info['type']}\n")
+                        if 'start_bpm' in trans_info and 'end_bpm' in trans_info:
+                            f.write(f"  Tempo: {trans_info['start_bpm']:.1f} BPM → {trans_info['end_bpm']:.1f} BPM\n")
+                        if trans_info.get('features'):
+                            f.write(f"  Features: {', '.join(trans_info['features'])}\n")
+                
+                # Footer
+                f.write(f"\n{'='*50}\n")
+                f.write("Generated by DJ Mix Generator\n")
+            
+            print(f"📄 Metadata saved to: {metadata_path}")
+            
+        except Exception as e:
+            print(f"Warning: Could not generate metadata file: {e}")

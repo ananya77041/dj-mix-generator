@@ -147,7 +147,9 @@ data/
 
 # DJ Mix Generator specific files
 dj_mix.wav
+dj_mix_metadata.txt
 dj_transitions_preview.wav
+dj_transitions_preview_metadata.txt
 demo_mix.wav
 *.wav
 *.mp3
