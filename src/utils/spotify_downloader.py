@@ -147,22 +147,46 @@ class SpotifyPlaylistDownloader:
             print("⬇️  Running spotdl download with multiple audio sources...")
             print("🎵 Audio sources: YouTube Music → YouTube → SoundCloud")
             print(f"🎧 Format: {format.upper()} (highest quality available)")
+            print("📥 Download progress:")
+            print("-" * 80)
             
-            # Run spotdl command
-            result = subprocess.run(
+            # Run spotdl command with real-time output streaming
+            process = subprocess.Popen(
                 cmd,
-                capture_output=True,
-                text=True
+                stdout=subprocess.PIPE,
+                stderr=subprocess.STDOUT,  # Combine stderr with stdout
+                text=True,
+                bufsize=1,  # Line buffered
+                universal_newlines=True
             )
             
-            if result.returncode != 0:
-                print(f"spotdl stderr: {result.stderr}")
-                raise ValueError(f"spotdl download failed: {result.stderr}")
+            # Stream output in real-time and collect it for analysis
+            output_lines = []
+            while True:
+                line = process.stdout.readline()
+                if not line and process.poll() is not None:
+                    break
+                if line:
+                    # Print the line immediately for real-time feedback
+                    print(line.rstrip())
+                    output_lines.append(line)
             
-            print(f"spotdl output: {result.stdout}")
+            # Wait for process to complete
+            return_code = process.wait()
+            
+            # Combine all output for analysis
+            full_output = ''.join(output_lines)
+            
+            print("-" * 80)
+            
+            if return_code != 0:
+                raise ValueError(f"spotdl download failed with return code {return_code}")
+            
+            # Use the collected output for analysis instead of result.stdout
+            result_stdout = full_output
             
             # Try to extract playlist name from the output for better user feedback
-            playlist_name = self._extract_playlist_name_from_output(result.stdout)
+            playlist_name = self._extract_playlist_name_from_output(result_stdout)
             if not playlist_name:
                 playlist_name = "Unknown Playlist"
             
@@ -173,7 +197,7 @@ class SpotifyPlaylistDownloader:
             download_count = 0
             lookup_errors = 0
             
-            lines = result.stdout.split('\n')
+            lines = result_stdout.split('\n')
             for line in lines:
                 if 'Found' in line and 'songs in' in line:
                     try:
