@@ -130,20 +130,23 @@ class SpotifyPlaylistDownloader:
             output_template = "{list-name}/{artists} - {title}.{output-ext}"
             output_path = str(self.base_dir / output_template)
             
-            # Prepare spotdl download command with minimal options to avoid network issues
+            # Prepare spotdl download command with multiple audio sources and highest quality
             cmd = [
                 "spotdl",
                 "download", 
                 normalized_url,
                 "--output", output_path,
                 "--format", format,
-                "--bitrate", "320k",  # High quality
-                "--threads", "1",     # Single thread to avoid rate limits
-                "--overwrite", "skip", # Skip existing files
-                "--audio", "youtube"   # Explicitly use YouTube as audio source
+                "--bitrate", "auto",    # Use highest available bitrate
+                "--threads", "2",       # Moderate threading for stability
+                "--overwrite", "skip",  # Skip existing files
+                "--audio", "youtube-music", "youtube", "soundcloud",  # Multiple fallback sources
+                "--config"              # Use the config file we modified
             ]
             
-            print("⬇️  Running spotdl download...")
+            print("⬇️  Running spotdl download with multiple audio sources...")
+            print("🎵 Audio sources: YouTube Music → YouTube → SoundCloud")
+            print(f"🎧 Format: {format.upper()} (highest quality available)")
             
             # Run spotdl command
             result = subprocess.run(
@@ -182,7 +185,7 @@ class SpotifyPlaylistDownloader:
                 elif 'LookupError: No results found' in line:
                     lookup_errors += 1
             
-            print(f"📊 Found {found_count} songs in playlist, {lookup_errors} failed to find on YouTube")
+            print(f"📊 Found {found_count} songs in playlist, {lookup_errors} failed to find on YouTube/SoundCloud")
             
             # Find the created directory - look for directories that were just created
             potential_dirs = []
@@ -197,8 +200,8 @@ class SpotifyPlaylistDownloader:
                 if lookup_errors > 0 and download_count == 0:
                     raise ValueError(
                         f"No tracks were downloaded from playlist '{playlist_name}'. "
-                        f"All {lookup_errors} tracks failed to be found on YouTube. "
-                        f"This playlist contains tracks that are not available on YouTube or are too obscure. "
+                        f"All {lookup_errors} tracks failed to be found on YouTube Music, YouTube, or SoundCloud. "
+                        f"This playlist contains tracks that are not available on any of these platforms or are too obscure. "
                         f"Try a different playlist with more mainstream tracks."
                     )
                 else:
