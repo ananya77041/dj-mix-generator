@@ -1,232 +1,224 @@
 # DJ Mix Generator
 
-Professional DJ mixing tool that creates seamless transitions between tracks with beat-perfect alignment and intelligent processing.
+A professional-grade DJ mixing tool that creates seamless transitions between tracks with beat-perfect alignment, intelligent tempo management, and advanced audio processing.
 
-## Features
+## 🚀 Quick Start
 
-- **Professional beat alignment** with intelligent beat shifting and artifact prevention
-- **Dynamic tempo ramping** for smooth BPM transitions between tracks with large differences
-- **Harmonic mixing** with Circle of Fifths key matching and automatic track reordering
-- **Interactive beatgrid alignment** with GPU-accelerated Dear PyGui interface
-- **Intelligent track caching** with automatic analysis persistence
-- **Measure-based transitions** for musically consistent mixing
-- **Professional audio quality** with volume normalization, EQ matching, and peak alignment
-- **Transition preview mode** with 2-measure buffers for testing quality
-- **Multiple tempo strategies** (sequential/uniform) and smart BPM/key sorting
-- **Manual downbeat selection** for precision timing control
+### Installation
 
-## Installation
+1. **Clone the repository:**
+```bash
+git clone <repository-url>
+cd dj-mix-generator
+```
 
-1. Install dependencies:
+2. **Create virtual environment:**
+```bash
+python -m venv venv
+source venv/bin/activate  # On Windows: venv\Scripts\activate
+```
+
+3. **Install dependencies:**
 ```bash
 pip install -r requirements.txt
 ```
 
-2. **For GUI features** (`--manual-downbeats`, `--interactive-beats`):
+4. **Install spotdl for Spotify integration:**
 ```bash
-# Ubuntu/Debian
-sudo apt-get install python3-tk
-
-# Optional: Audio playback during alignment
-pip install sounddevice
+spotdl --download-ffmpeg  # Downloads FFmpeg automatically
 ```
-
-## Usage
 
 ### Basic Usage
 
+**Mix local audio files:**
 ```bash
 python dj_mix_generator.py track1.wav track2.wav track3.wav
 ```
 
-Creates seamless 8-measure transitions using the first track's BPM, outputs `dj_mix.wav`.
-
-### Harmonic Mixing
-
+**Mix Spotify playlist:**
 ```bash
-python dj_mix_generator.py --reorder-by-key track1.wav track2.wav track3.wav
+python dj_mix_generator.py --spotify-playlist="https://open.spotify.com/playlist/..." --transition-measures=16
 ```
 
-Reorders tracks for optimal harmonic compatibility using Circle of Fifths relationships.
-
-### Transition Preview
-
+**Custom track duration:**
 ```bash
-python dj_mix_generator.py --transitions-only track1.wav track2.wav track3.wav
+python dj_mix_generator.py --custom-play-time=2:30 --transition-measures=8 *.wav
 ```
 
-Creates `dj_transitions_preview.wav` with 2-measure buffers around each transition for quality testing.
+## ✨ Key Features
 
-### Caching
+### 🎵 Spotify Integration
+- Download and mix playlists directly from Spotify URLs
+- Multi-source audio (YouTube Music, YouTube, SoundCloud)
+- Automatic playlist naming for output files
+- Smart track filtering and duplicate handling
 
+### 🎛️ Advanced Mixing
+- **Beat-perfect alignment** with intelligent shifting
+- **Tempo strategies**: Sequential, Uniform, Match-track
+- **Harmonic mixing** with Circle of Fifths key matching
+- **Frequency-specific transitions** (low, mid, high frequency blending)
+- **Custom play time** per track with intelligent cutting
+
+### 🔧 Professional Tools
+- **Interactive beatgrid alignment** with GPU-accelerated interface
+- **Manual downbeat selection** for precision timing
+- **Transition preview mode** for quality testing
+- **Intelligent caching** for faster repeated processing
+- **Comprehensive metadata** generation
+
+### 🎚️ Audio Quality
+- Volume normalization and EQ matching
+- Peak alignment for professional sound
+- Piecewise tempo correction (sub-5ms precision)
+- Multiple crossfading algorithms
+
+## 📖 Usage Examples
+
+### Basic Mixing
 ```bash
-python dj_mix_generator.py --cache-info      # View cache
-python dj_mix_generator.py --clear-cache     # Clear cache
-python dj_mix_generator.py --no-cache [...]  # Disable caching
+# Simple mix with default settings
+python dj_mix_generator.py song1.wav song2.wav song3.wav
+
+# Output: dj_mix.wav (seamless mix with 8-measure transitions)
 ```
 
-Automatically caches track analysis for faster repeated usage.
-
-### Manual Downbeat Selection
-
+### Spotify Playlist Mixing
 ```bash
-python dj_mix_generator.py --manual-downbeats track1.wav track2.wav track3.wav
+# Download and mix Spotify playlist with custom timing
+python dj_mix_generator.py \
+  --spotify-playlist="https://open.spotify.com/playlist/37i9dQZF1DX0XUsuxWHRQd" \
+  --custom-play-time=2:00 \
+  --transition-measures=16
+
+# Output: [Playlist Name].wav
 ```
 
-Interactive GUI for precise first downbeat selection with beat snapping and visual feedback.
-
-### Transition Downbeat Mapping
-
+### Advanced Features
 ```bash
-python dj_mix_generator.py --transition-downbeats track1.wav track2.wav track3.wav
+# Harmonic mixing with key reordering
+python dj_mix_generator.py --reorder-by-key --transition-measures=16 *.wav
 
-# Combine with other features for ultimate precision
-python dj_mix_generator.py --tempo-strategy=match-track --transition-downbeats --mf-transition track1.wav track2.wav track3.wav
+# Random selection with BPM sorting
+python dj_mix_generator.py --random-order=10 --bpm-sort *.wav
+
+# Transition preview for testing
+python dj_mix_generator.py --transitions-only --transition-seconds=30 *.wav
 ```
 
-Interactive GUI for precise downbeat selection within transition segments. The 2-step process allows you to select the optimal downbeat for each track's transition portion, enabling perfect alignment without changing track tempos.
-
-### Interactive Beatgrid Alignment
-
+### Interactive Mode
 ```bash
-python dj_mix_generator.py --interactive-beats track1.wav track2.wav track3.wav
+# Manual precision with GUI interfaces
+python dj_mix_generator.py \
+  --manual-downbeats \
+  --interactive-beats \
+  --transition-downbeats \
+  *.wav
 ```
 
-**GPU-Accelerated Interface (Dear PyGui):**
-- 60+ FPS real-time performance with professional dark theme
-- 3-step workflow with live audio playback and beat stretching
-- Real-time BPM adjustment with immediate visual feedback
+## 🎯 Command-Line Options
 
-**Fallback Interface (matplotlib):**
-- Interactive beat alignment with drag-and-drop functionality
-- Real-time alignment quality feedback
+### Input Sources
+- `track1.wav track2.wav ...` - Local audio files
+- `--spotify-playlist=URL` - Spotify playlist URL
+- `--demo` - Use built-in demo tracks
 
+### Mixing Control
+- `--tempo-strategy=match-track` - Tempo handling (sequential/uniform/match-track)
+- `--transition-measures=16` - Transition length in measures
+- `--transition-seconds=30` - Transition length in seconds
+- `--custom-play-time=2:30` - Maximum duration per track
+
+### Track Organization
+- `--reorder-by-key` - Optimize track order for harmonic mixing
+- `--bpm-sort` - Sort tracks by BPM
+- `--random-order=N` - Select N random tracks
+
+### Audio Processing
+- `--no-eq-matching` - Disable EQ matching
+- `--eq-strength=0.5` - EQ matching strength (0.0-1.0)
+- `--no-volume-matching` - Disable volume normalization
+- `--lf-transition` / `--mf-transition` / `--hf-transition` - Frequency-specific blending
+
+### Interactive Features
+- `--manual-downbeats` - GUI for downbeat selection
+- `--interactive-beats` - GPU-accelerated beatgrid alignment
+- `--transition-downbeats` - GUI for transition timing
+
+### Output Options
+- `--transitions-only` - Generate preview with transitions only
+- `--irregular-tempo` - Allow non-integer BPM values
+
+### Cache Management
+- `--no-cache` - Disable analysis caching
+- `--cache-info` - Show cache statistics
+- `--clear-cache` - Clear analysis cache
+
+## 📁 Output Files
+
+The tool generates several output files:
+
+- **`dj_mix.wav`** (or `[Playlist Name].wav`) - Complete mix
+- **`dj_mix_metadata.txt`** - Detailed track information and timing
+- **`dj_transitions_preview.wav`** - Transition-only preview (with `--transitions-only`)
+
+### Metadata File Contents
+- Track listing with artist/title information
+- Precise timing for each track in the mix
+- Transition details and audio processing settings
+- Mix statistics and generation information
+
+## 🛠️ Requirements
+
+- **Python 3.8+**
+- **FFmpeg** (installed automatically with spotdl)
+- **Audio files in WAV format** (for local files)
+
+### Optional Dependencies
 ```bash
-pip install dearpygui>=1.10.0  # For GPU acceleration
+# For interactive GUI features
+pip install dearpygui>=1.10.0
+
+# For audio playback during alignment
+pip install sounddevice
+
+# For additional GUI backends
+sudo apt-get install python3-tk  # Ubuntu/Debian
 ```
 
-### Audio Quality Features
+## 🔧 Troubleshooting
 
-**Volume & EQ Matching**
-```bash
-# Default: Volume + 50% EQ matching
-python dj_mix_generator.py track1.wav track2.wav track3.wav
+**Common Issues:**
+- **No module errors**: Run `pip install -r requirements.txt`
+- **Spotify download fails**: Check internet connection and playlist privacy
+- **Empty output**: Verify input WAV files are valid
+- **Slow processing**: Large files and many tracks increase processing time
 
-# Custom EQ strength
-python dj_mix_generator.py --eq-strength=0.25 track1.wav track2.wav track3.wav
+**Performance Tips:**
+- Use `--no-cache` for one-off mixes
+- Enable caching for repeated processing of same tracks
+- Use `--transitions-only` to test settings quickly
 
-# Disable features
-python dj_mix_generator.py --no-volume-matching --no-eq-matching track1.wav track2.wav track3.wav
-```
+## 📚 Developer Documentation
 
-**Peak Alignment**
-```bash
-# Default: Peak alignment enabled
-python dj_mix_generator.py track1.wav track2.wav track3.wav
+For detailed technical documentation, see the [`docs/`](docs/) directory:
+- [Architecture Overview](docs/architecture.md)
+- [Core Components](docs/core/)
+- [CLI Implementation](docs/cli/)
+- [Utilities](docs/utils/)
 
-# Disable for faster processing
-python dj_mix_generator.py --no-peak-alignment track1.wav track2.wav track3.wav
-```
+## 🤝 Contributing
 
-Features: RMS volume normalization, 3-band EQ matching, micro peak-to-beat alignment, and low-frequency blending for professional results.
+1. Fork the repository
+2. Create a feature branch (`git checkout -b feature/amazing-feature`)
+3. Commit your changes (`git commit -m 'Add amazing feature'`)
+4. Push to the branch (`git push origin feature/amazing-feature`)
+5. Open a Pull Request
 
-### Low-Frequency Transition
+## 📄 License
 
-```bash
-# Enable low-frequency blending to prevent bass/kick clashing
-python dj_mix_generator.py --lf-transition track1.wav track2.wav track3.wav
+This project is licensed under the MIT License - see the [LICENSE](LICENSE) file for details.
 
-# Combine with other features
-python dj_mix_generator.py --tempo-strategy=match-track --lf-transition track1.wav track2.wav track3.wav
-```
+---
 
-Prevents kick drum and bass clashing by gradually blending low frequencies (20-200 Hz) from 100% track1 to 100% track2 during transitions while maintaining normal crossfading for higher frequencies.
-
-### Mid-Frequency Transition
-
-```bash
-# Enable mid-frequency blending for smoother melodic transitions
-python dj_mix_generator.py --mf-transition track1.wav track2.wav track3.wav
-
-# Combine with tempo strategies for optimal results
-python dj_mix_generator.py --tempo-strategy=uniform --mf-transition track1.wav track2.wav track3.wav
-```
-
-Creates smoother transitions for melodic and harmonic content by gradually blending mid frequencies (200-2000 Hz) from 100% track1 to 100% track2 during transitions. This frequency range includes vocals, melody lines, and harmonic instruments, resulting in more musical transitions while preserving normal crossfading for bass and treble.
-
-### Tempo Strategies
-
-```bash
-# Sequential: Use first track's BPM (default)
-python dj_mix_generator.py --tempo-strategy=sequential track1.wav track2.wav track3.wav
-
-# Uniform: Use average BPM of all tracks
-python dj_mix_generator.py --tempo-strategy=uniform track1.wav track2.wav track3.wav
-
-# Match-track: Each track plays at native tempo with tempo ramping during transitions
-python dj_mix_generator.py --tempo-strategy=match-track track1.wav track2.wav track3.wav
-```
-
-### Transition Length
-
-```bash
-# Measure-based (recommended) - 8 measures default
-python dj_mix_generator.py --transition-measures=16 track1.wav track2.wav track3.wav
-
-# Time-based (legacy) - fixed seconds
-python dj_mix_generator.py --transition-seconds=30 track1.wav track2.wav track3.wav
-```
-
-## Example Usage
-
-```bash
-# Basic mixing
-python dj_mix_generator.py track1.wav track2.wav track3.wav
-
-# Harmonic mixing with preview
-python dj_mix_generator.py --reorder-by-key --transitions-only track1.wav track2.wav track3.wav
-
-# Manual precision
-python dj_mix_generator.py --manual-downbeats --interactive-beats track1.wav track2.wav
-
-# Professional quality
-python dj_mix_generator.py --tempo-strategy=uniform --transition-measures=16 track1.wav track2.wav
-```
-
-## How It Works
-
-1. **Track Analysis**: Extracts BPM, key, beats, and downbeats using librosa
-2. **Beat Matching**: Time-stretches tracks to match tempo while preserving pitch
-3. **Enhanced Detection**: Optimized percussion analysis for accurate downbeat detection
-4. **Tempo Correction**: Piecewise stretching eliminates drift with sub-5ms precision
-5. **Perfect Alignment**: Beat-by-beat matching for professional transitions
-6. **Crossfading**: Equal-power curves with beat-aligned segments
-7. **Quality Processing**: Volume normalization, EQ matching, and peak alignment
-
-## Limitations
-
-- Simple key detection using chromagram analysis
-- Assumes 4/4 time signature
-- WAV files only
-
-## Project Structure
-
-Modular components:
-- `models.py` - Track dataclass
-- `audio_analyzer.py` - BPM/key detection 
-- `beat_utils.py` - Beat alignment
-- `mix_generator.py` - Mixing engine
-- `key_matcher.py` - Harmonic mixing
-- `track_cache.py` - Analysis caching
-- `dj_mix_generator.py` - Main CLI
-
-
-## Troubleshooting
-
-- **ModuleNotFoundError**: `pip install -r requirements.txt`
-- **Empty file errors**: Ensure WAV files are valid and not corrupted
-- **No GUI backend**: Install tkinter or PyQt5 for interactive features
-- **No audio playback**: `pip install sounddevice` for alignment audio
-- **Long processing**: Large files take time; BPM detection is slowest step
-
-Enjoy your automated DJ mixes! 🎧
+**Enjoy creating professional DJ mixes!** 🎧✨

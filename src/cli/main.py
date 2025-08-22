@@ -394,10 +394,40 @@ class DJMixGeneratorCLI:
     
     def _get_output_path(self) -> str:
         """Get the appropriate output file path"""
+        # Use playlist name if available (from Spotify downloads)
+        if hasattr(self, 'spotify_downloader') and self.spotify_downloader and hasattr(self.spotify_downloader, 'playlist_name'):
+            playlist_name = self.spotify_downloader.playlist_name
+            if playlist_name and playlist_name != "Unknown Playlist":
+                # Sanitize the playlist name for use as filename
+                safe_name = self._sanitize_filename(playlist_name)
+                if self.config.transitions_only:
+                    return f"{safe_name}_transitions_preview.wav"
+                else:
+                    return f"{safe_name}.wav"
+        
+        # Fallback to default names
         if self.config.transitions_only:
             return FileConstants.TRANSITIONS_OUTPUT_NAME
         else:
             return FileConstants.DEFAULT_OUTPUT_NAME
+    
+    def _sanitize_filename(self, name: str) -> str:
+        """Sanitize a string for use as a filename"""
+        import re
+        # Remove or replace problematic characters
+        sanitized = re.sub(r'[<>:"/\\|?*]', '_', name)
+        # Remove leading/trailing dots and spaces
+        sanitized = sanitized.strip('. ')
+        # Replace multiple underscores with single ones
+        sanitized = re.sub(r'_+', '_', sanitized)
+        # Limit length
+        if len(sanitized) > 100:
+            sanitized = sanitized[:100].rstrip('_')
+        # Ensure it's not empty
+        if not sanitized:
+            sanitized = "spotify_playlist"
+        
+        return sanitized
     
     def _generate_mix(self, output_path: str):
         """Generate the complete DJ mix or transitions preview"""

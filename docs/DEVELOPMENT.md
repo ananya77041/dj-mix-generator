@@ -1,229 +1,595 @@
-# DJ Mix Generator - Development Guide
+# Development Guide
 
-## Project Structure
+This document provides a comprehensive guide for developers working on the DJ Mix Generator project. It covers architecture, development setup, coding standards, and contribution guidelines.
 
-The codebase has been refactored for better maintainability, following SOLID principles and DRY methodology:
+## 📁 Project Structure
 
 ```
 dj-mix-generator/
-├── src/                          # Main source code
-│   ├── core/                     # Core business logic
-│   │   ├── config.py            # Configuration and constants
-│   │   ├── models.py            # Enhanced data models
-│   │   ├── audio_analyzer.py    # Audio analysis logic
-│   │   ├── mix_generator.py     # Main mixing engine
-│   │   └── beat_utils.py        # Beat alignment utilities
-│   ├── gui/                     # GUI components
-│   │   ├── base_gui.py          # Base GUI classes and utilities
-│   │   ├── downbeat_gui.py      # Downbeat selection GUI
-│   │   ├── transition_gui.py    # Transition downbeat GUI
-│   │   └── beatgrid/            # Beatgrid alignment GUIs
-│   ├── utils/                   # Utilities and helpers
-│   │   ├── audio_processing.py  # Common audio processing functions
-│   │   ├── cache.py             # Caching functionality
-│   │   ├── key_matching.py      # Key/harmonic matching
-│   │   └── file_utils.py        # File I/O utilities
-│   └── cli/                     # Command-line interface
-│       ├── main.py              # Main CLI application
-│       └── args_parser.py       # Command-line argument parsing
-├── tests/                       # All test files
-├── data/                        # Test data and samples
-└── docs/                        # Documentation
+├── src/                     # Source code
+│   ├── cli/                 # Command-line interface
+│   │   ├── args_parser.py   # Argument parsing and validation
+│   │   └── main.py          # Main CLI application
+│   ├── core/                # Core audio processing engine
+│   │   ├── audio_analyzer.py # Audio analysis (BPM, beats, key)
+│   │   ├── beat_utils.py    # Beat alignment and correction
+│   │   ├── config.py        # Configuration management
+│   │   ├── mix_generator.py # Main mixing engine
+│   │   └── models.py        # Data models and structures
+│   ├── gui/                 # Interactive user interfaces
+│   │   ├── base_gui.py      # Common GUI utilities
+│   │   ├── downbeat_gui.py  # Manual downbeat selection
+│   │   ├── transition_gui.py # Transition timing GUI
+│   │   └── beatgrid/        # Interactive beatgrid alignment
+│   │       ├── advanced_gui.py    # GPU-accelerated interface
+│   │       ├── fallback_gui.py    # Matplotlib fallback
+│   │       └── simple_gui.py      # Basic alignment interface
+│   └── utils/               # Utilities and external integrations
+│       ├── audio_processing.py    # Audio processing helpers
+│       ├── cache.py         # Intelligent caching system
+│       ├── key_matching.py  # Harmonic mixing algorithms
+│       └── spotify_downloader.py # Spotify playlist integration
+├── tests/                   # Test suite
+│   ├── unit/               # Unit tests
+│   ├── integration/        # Integration tests
+│   └── comprehensive/      # End-to-end tests
+├── docs/                   # Documentation
+│   ├── core/              # Core component docs
+│   ├── cli/               # CLI documentation
+│   ├── utils/             # Utilities documentation
+│   └── architecture.md    # System architecture
+├── data/                   # Test data and examples
+├── scripts/                # Development and deployment scripts
+├── requirements.txt        # Python dependencies
+├── setup.py               # Package setup
+└── README.md              # User documentation
 ```
 
-## Architecture Principles
+## 🏗️ Architecture Overview
 
-### 1. Separation of Concerns
-- **Core Logic**: Pure business logic with no UI dependencies
-- **GUI Components**: Reusable GUI components with common base classes
-- **Utilities**: Shared functionality used across components
-- **CLI**: Command-line interface separate from core logic
+### Layered Architecture
+```
+┌─────────────────┐
+│   CLI Layer     │  # User interface and argument handling
+├─────────────────┤
+│   Core Engine   │  # Audio analysis and mixing logic
+├─────────────────┤
+│   Utilities     │  # External services and optimization
+└─────────────────┘
+```
 
-### 2. DRY (Don't Repeat Yourself)
-- `AudioProcessor`: Common audio processing functions
-- `FrequencyProcessor`: Frequency domain operations
-- `TransitionProcessor`: Specialized transition effects
-- `TempoProcessor`: Tempo and rhythm processing
-- `BaseGuiComponent`: Common GUI functionality
+### Data Flow
+```
+Input → Analysis → Processing → Mixing → Output
+  ↓       ↓          ↓         ↓       ↓
+Audio   Track     Beat      Mix    WAV File
+Files   Objects   Alignment  Gen.   + Metadata
+```
 
-### 3. Configuration-Driven
-- `MixConfiguration`: Type-safe configuration object
-- `AudioQualitySettings`: Audio enhancement settings
-- `TransitionSettings`: Transition configuration
-- Centralized constants in `config.py`
+## 🚀 Development Setup
 
-### 4. Enhanced Models
-- `Track`: Enhanced with better organization and methods
-- `AudioSegment`: Represents audio segments
-- `BeatInfo`: Beat and rhythm information
-- `KeyInfo`: Key and harmonic information
-- `MixResult`: Complete mix generation result
-
-## Key Improvements
-
-### Code Organization
-- ✅ Modular components with clear responsibilities
-- ✅ Base classes to eliminate code duplication
-- ✅ Type hints throughout for better IDE support
-- ✅ Comprehensive docstrings and comments
-
-### Audio Processing
-- ✅ Centralized audio processing utilities
-- ✅ Reusable frequency separation functions
-- ✅ Improved tempo ramping with synchronization
-- ✅ Enhanced crossfading algorithms
-
-### GUI Framework
-- ✅ Base GUI classes for consistency
-- ✅ Multi-step workflow support
-- ✅ Backend management for cross-platform compatibility
-- ✅ Standardized plotting utilities
-
-### Configuration Management
-- ✅ Type-safe configuration objects
-- ✅ Validation at multiple levels
-- ✅ Centralized argument parsing
-- ✅ Clear separation of concerns
-
-## Development Workflow
-
-### Setting Up Development Environment
-
+### 1. Environment Setup
 ```bash
-# Clone the repository
+# Clone repository
 git clone <repository-url>
 cd dj-mix-generator
 
 # Create virtual environment
 python -m venv venv
-source venv/bin/activate  # On Windows: venv\\Scripts\\activate
+source venv/bin/activate  # Windows: venv\Scripts\activate
 
-# Install in development mode
-pip install -e .
+# Install dependencies
+pip install -r requirements.txt
 
 # Install development dependencies
-pip install -e .[dev]
+pip install pytest black flake8 mypy
+
+# Install spotdl for Spotify integration
+spotdl --download-ffmpeg
+```
+
+### 2. IDE Configuration
+
+#### VS Code Settings
+```json
+{
+    "python.defaultInterpreterPath": "./venv/bin/python",
+    "python.linting.enabled": true,
+    "python.linting.flake8Enabled": true,
+    "python.formatting.provider": "black",
+    "python.typing.mypy-enabled": true
+}
+```
+
+#### PyCharm Configuration
+- Set Python interpreter to `./venv/bin/python`
+- Enable type checking with mypy
+- Configure code style to use Black formatter
+
+### 3. Pre-commit Setup
+```bash
+# Install pre-commit hooks
+pip install pre-commit
+pre-commit install
+
+# Run hooks manually
+pre-commit run --all-files
+```
+
+## 📋 Coding Standards
+
+### Python Style Guide
+- **PEP 8 compliance** with Black formatting
+- **Type hints** for all public functions
+- **Docstrings** for all classes and methods (Google style)
+- **Maximum line length**: 88 characters (Black default)
+
+### Example Code Style
+```python
+from typing import List, Optional
+import numpy as np
+
+
+class AudioAnalyzer:
+    """Comprehensive audio analysis for DJ mixing applications.
+    
+    This class handles BPM detection, beat tracking, and key analysis
+    using advanced signal processing techniques.
+    
+    Attributes:
+        use_cache: Enable intelligent caching of analysis results
+        cache: Cache instance for storing analysis data
+    """
+    
+    def __init__(self, use_cache: bool = True) -> None:
+        """Initialize audio analyzer with caching options.
+        
+        Args:
+            use_cache: Enable caching for performance optimization
+        """
+        self.use_cache = use_cache
+        self.cache = TrackCache() if use_cache else None
+    
+    def analyze_track(self, filepath: str) -> Track:
+        """Perform complete audio analysis on a track.
+        
+        Args:
+            filepath: Path to audio file in WAV format
+            
+        Returns:
+            Complete Track object with all analysis results
+            
+        Raises:
+            ValueError: If file is invalid or analysis fails
+            FileNotFoundError: If audio file doesn't exist
+        """
+        # Implementation with proper error handling
+        if not os.path.exists(filepath):
+            raise FileNotFoundError(f"Audio file not found: {filepath}")
+        
+        try:
+            # Analysis logic here
+            return track
+        except Exception as e:
+            raise ValueError(f"Analysis failed for {filepath}: {e}")
+```
+
+### Error Handling Patterns
+```python
+# Specific exception types
+class AudioAnalysisError(Exception):
+    """Raised when audio analysis fails."""
+    pass
+
+# Graceful degradation
+try:
+    result = expensive_operation()
+except ExternalServiceError:
+    logger.warning("External service failed, using fallback")
+    result = fallback_operation()
+
+# Clear error messages
+if not tracks:
+    raise ValueError(
+        "No valid tracks found. Ensure WAV files are valid and not corrupted."
+    )
+```
+
+## 🧪 Testing Strategy
+
+### Test Structure
+```
+tests/
+├── unit/                    # Unit tests for individual components
+│   ├── test_audio_analyzer.py
+│   ├── test_mix_generator.py
+│   └── test_models.py
+├── integration/             # Integration tests
+│   ├── test_cli_workflow.py
+│   └── test_spotify_integration.py
+└── comprehensive/          # End-to-end tests
+    ├── test_full_workflow.py
+    └── test_performance.py
+```
+
+### Test Examples
+```python
+import pytest
+import numpy as np
+from core.models import Track, BeatInfo, KeyInfo
+
+
+class TestAudioAnalyzer:
+    """Test suite for AudioAnalyzer class."""
+    
+    @pytest.fixture
+    def sample_track(self):
+        """Create sample track for testing."""
+        return Track(
+            filepath=Path("test.wav"),
+            audio=np.random.randn(44100),  # 1 second of audio
+            sr=44100,
+            beat_info=BeatInfo(
+                beats=np.array([0.0, 0.5, 1.0]),
+                downbeats=np.array([0.0]),
+                bpm=120.0,
+                confidence=0.85
+            ),
+            key_info=KeyInfo(
+                key="C major",
+                confidence=0.90,
+                chroma=np.random.randn(12)
+            ),
+            metadata={}
+        )
+    
+    def test_bpm_detection(self, sample_track):
+        """Test BPM detection accuracy."""
+        assert sample_track.bpm == 120.0
+        assert sample_track.beat_info.confidence >= 0.8
+    
+    def test_key_detection(self, sample_track):
+        """Test key detection functionality."""
+        assert "major" in sample_track.key or "minor" in sample_track.key
+        assert sample_track.key_info.confidence >= 0.5
+    
+    @pytest.mark.parametrize("bpm,expected_interval", [
+        (120.0, 0.5),
+        (140.0, 0.43),
+        (100.0, 0.6)
+    ])
+    def test_beat_intervals(self, bpm, expected_interval):
+        """Test beat interval calculations."""
+        beat_info = BeatInfo(
+            beats=np.array([]),
+            downbeats=np.array([]),
+            bpm=bpm,
+            confidence=1.0
+        )
+        assert abs(beat_info.beat_interval - expected_interval) < 0.01
 ```
 
 ### Running Tests
-
 ```bash
 # Run all tests
-python -m pytest tests/
-
-# Run specific test categories
-python -m pytest tests/unit/
-python -m pytest tests/integration/
-python -m pytest tests/comprehensive/
+pytest
 
 # Run with coverage
-python -m pytest --cov=src tests/
+pytest --cov=src
+
+# Run specific test file
+pytest tests/unit/test_audio_analyzer.py
+
+# Run tests with verbose output
+pytest -v
+
+# Run performance tests
+pytest tests/comprehensive/ -m "not slow"
 ```
 
-### Code Quality
+## 🔧 Component Development Guide
 
-```bash
-# Format code
-black src/ tests/
+### Adding New Audio Analysis Features
 
-# Lint code
-flake8 src/ tests/
-
-# Type checking (if mypy is installed)
-mypy src/
+1. **Extend Track Model**
+```python
+# In models.py
+@dataclass
+class Track:
+    # ... existing fields ...
+    tempo_stability: Optional[float] = None  # New analysis result
 ```
 
-## Adding New Features
+2. **Update AudioAnalyzer**
+```python
+# In audio_analyzer.py
+def _analyze_tempo_stability(self, audio: np.ndarray, sr: int) -> float:
+    """Analyze tempo stability throughout the track."""
+    # Implementation here
+    return stability_score
 
-### 1. Core Functionality
-- Add new classes to `src/core/`
-- Update `models.py` if new data structures are needed
-- Add constants to `config.py`
-- Update configuration classes if new settings are needed
+def analyze_track(self, filepath: str) -> Track:
+    # ... existing analysis ...
+    tempo_stability = self._analyze_tempo_stability(audio, sr)
+    # Include in Track creation
+```
 
-### 2. Audio Processing
-- Add new processors to `src/utils/audio_processing.py`
-- Follow existing patterns for processor classes
-- Add comprehensive docstrings and type hints
+3. **Add Caching Support**
+```python
+# Update cache serialization in cache.py
+def _serialize_track_data(self, track: Track) -> dict:
+    data = {
+        # ... existing fields ...
+        'tempo_stability': track.tempo_stability
+    }
+    return data
+```
 
-### 3. GUI Components
-- Inherit from `BaseGuiComponent` or `MultiStepGui`
-- Use `AudioWaveformPlotter` for consistent plotting
-- Add to appropriate subdirectory in `src/gui/`
+### Adding New Mixing Features
 
-### 4. CLI Options
-- Update `args_parser.py` to add new arguments
-- Update configuration classes to handle new options
-- Add validation logic
+1. **Extend Configuration**
+```python
+# In config.py
+@dataclass
+class TransitionSettings:
+    # ... existing settings ...
+    enable_tempo_smoothing: bool = False
+```
 
-## Testing Strategy
+2. **Update MixGenerator**
+```python
+# In mix_generator.py
+def _apply_tempo_smoothing(self, track1_audio, track2_audio):
+    """Apply tempo smoothing during transitions."""
+    if not self.config.transition_settings.enable_tempo_smoothing:
+        return track1_audio, track2_audio
+    # Implementation here
+```
 
-### Unit Tests (`tests/unit/`)
-- Test individual components in isolation
-- Mock external dependencies
-- Focus on edge cases and error conditions
+3. **Add CLI Arguments**
+```python
+# In args_parser.py
+parser.add_argument('--tempo-smoothing', action='store_true',
+                   help='Enable tempo smoothing during transitions')
+```
 
-### Integration Tests (`tests/integration/`)
-- Test component interactions
-- Use small test data files
-- Verify end-to-end workflows
+### Adding External Service Integrations
 
-### Comprehensive Tests (`tests/comprehensive/`)
-- Test all parameter combinations
-- Performance and stress testing
-- Real-world scenario validation
+1. **Create Service Module**
+```python
+# In utils/new_service.py
+class NewServiceDownloader:
+    def __init__(self, base_dir: str = None):
+        self.base_dir = Path(base_dir or ".")
+    
+    def download_playlist(self, url: str) -> List[str]:
+        """Download playlist from new service."""
+        # Validation, download, error handling
+        return file_paths
+```
 
-## Performance Considerations
+2. **Integrate with CLI**
+```python
+# In cli/main.py
+def _download_new_service_playlist(self, url: str) -> List[str]:
+    """Download from new service with error handling."""
+    try:
+        downloader = NewServiceDownloader()
+        return downloader.download_playlist(url)
+    except Exception as e:
+        print(f"❌ Failed to download: {e}")
+        raise
+```
+
+## 📊 Performance Guidelines
 
 ### Memory Management
-- Use generators for large datasets
-- Clear audio data when no longer needed
-- Monitor peak memory usage in tests
+```python
+# Good: Stream processing for large files
+def process_large_audio(filepath: str):
+    with sf.SoundFile(filepath) as f:
+        for block in f.blocks(blocksize=1024):
+            yield process_block(block)
 
-### Processing Speed
-- Profile critical paths with `cProfile`
-- Use NumPy vectorized operations
-- Consider parallel processing for independent operations
+# Bad: Loading entire file into memory
+def process_large_audio_bad(filepath: str):
+    audio, sr = sf.read(filepath)  # Loads entire file
+    return process_audio(audio)
+```
+
+### CPU Optimization
+```python
+# Use numpy vectorized operations
+def apply_gain_vectorized(audio: np.ndarray, gain: float) -> np.ndarray:
+    return audio * gain  # Vectorized multiplication
+
+# Avoid loops where possible
+def apply_gain_slow(audio: np.ndarray, gain: float) -> np.ndarray:
+    result = np.zeros_like(audio)
+    for i in range(len(audio)):  # Slow loop
+        result[i] = audio[i] * gain
+    return result
+```
 
 ### Caching Strategy
-- Cache expensive analysis results
-- Implement cache invalidation
-- Monitor cache size and cleanup
+```python
+# Cache expensive operations
+@lru_cache(maxsize=128)
+def expensive_calculation(param: int) -> float:
+    # Expensive operation here
+    return result
 
-## Debugging and Profiling
+# Use file-based caching for persistence
+def get_analysis_with_cache(filepath: str) -> Track:
+    cache_key = f"{filepath}_{os.path.getmtime(filepath)}"
+    if cached := cache.get(cache_key):
+        return cached
+    
+    result = expensive_analysis(filepath)
+    cache.set(cache_key, result)
+    return result
+```
 
-### Debug Mode
-```bash
-# Enable debug logging
-export DJ_MIX_DEBUG=1
-python dj_mix_generator.py --debug track1.wav track2.wav
+## 🐛 Debugging Guidelines
+
+### Logging Setup
+```python
+import logging
+
+# Configure logging
+logging.basicConfig(
+    level=logging.INFO,
+    format='%(asctime)s - %(name)s - %(levelname)s - %(message)s'
+)
+
+logger = logging.getLogger(__name__)
+
+# Use appropriate log levels
+logger.debug("Detailed diagnostic information")
+logger.info("General information about program execution")
+logger.warning("Something unexpected happened")
+logger.error("Serious problem occurred")
+logger.critical("Program cannot continue")
+```
+
+### Common Issues and Solutions
+
+#### Audio Analysis Problems
+```python
+# Debug BPM detection
+def debug_bpm_detection(audio, sr):
+    tempo, beats = librosa.beat.beat_track(y=audio, sr=sr)
+    print(f"Detected tempo: {tempo}")
+    print(f"Beat count: {len(beats)}")
+    print(f"Beat interval std: {np.std(np.diff(beats))}")
+```
+
+#### Memory Issues
+```python
+# Monitor memory usage
+import psutil
+
+def monitor_memory():
+    process = psutil.Process()
+    memory_mb = process.memory_info().rss / 1024 / 1024
+    print(f"Memory usage: {memory_mb:.1f} MB")
 ```
 
 ### Profiling
 ```bash
-# Profile execution
-python -m cProfile -o profile.stats dj_mix_generator.py track1.wav track2.wav
+# Profile CPU usage
+python -m cProfile -o profile.stats dj_mix_generator.py args...
 
 # Analyze profile
-python -c "import pstats; p = pstats.Stats('profile.stats'); p.sort_stats('time').print_stats(20)"
+python -c "import pstats; pstats.Stats('profile.stats').sort_stats('tottime').print_stats(20)"
+
+# Memory profiling
+pip install memory_profiler
+python -m memory_profiler dj_mix_generator.py
 ```
 
-## Contributing
+## 📚 Documentation Standards
 
-1. Fork the repository
-2. Create a feature branch (`git checkout -b feature/amazing-feature`)
-3. Make your changes following the coding standards
-4. Add tests for new functionality
-5. Run the full test suite
-6. Update documentation as needed
-7. Submit a pull request
+### Code Documentation
+- **Classes**: Purpose, usage examples, key attributes
+- **Methods**: Parameters, return values, exceptions, examples
+- **Complex algorithms**: High-level explanation and references
 
-## Migration from Legacy Code
+### API Documentation
+```python
+def align_beats(
+    track1: Track, 
+    track2: Track, 
+    transition_duration: float = 30.0
+) -> Tuple[Track, Track]:
+    """Align beats between two tracks for smooth transitions.
+    
+    This function performs intelligent beat alignment by analyzing
+    the beat positions within the transition region and applying
+    minimal time-stretching to achieve perfect alignment.
+    
+    Args:
+        track1: The first track (will be aligned to)
+        track2: The second track (will be aligned from)
+        transition_duration: Length of transition in seconds
+        
+    Returns:
+        A tuple of (aligned_track1, aligned_track2) where track2
+        has been time-stretched to match track1's beat positions
+        
+    Raises:
+        ValueError: If tracks have incompatible sample rates
+        AudioProcessingError: If beat alignment fails
+        
+    Example:
+        >>> track1 = analyzer.analyze_track("song1.wav")
+        >>> track2 = analyzer.analyze_track("song2.wav") 
+        >>> aligned1, aligned2 = align_beats(track1, track2, 30.0)
+        >>> print(f"Alignment quality: {calculate_alignment_quality(aligned1, aligned2)}")
+    """
+```
 
-The refactored codebase maintains backwards compatibility:
-- Old entry point still works: `python dj_mix_generator.py`
-- All command-line options preserved
-- Same output file formats and quality
-- Existing cache files compatible
+## 🔀 Git Workflow
 
-Legacy files are preserved but should not be modified. All new development should use the refactored structure.
+### Branch Strategy
+```bash
+# Feature development
+git checkout -b feature/spotify-integration
+git commit -am "Add Spotify playlist downloading"
+git push origin feature/spotify-integration
+# Create pull request
+
+# Bug fixes
+git checkout -b fix/audio-analysis-crash
+git commit -am "Fix crash in BPM detection for short tracks"
+git push origin fix/audio-analysis-crash
+
+# Releases
+git checkout -b release/v1.2.0
+git tag v1.2.0
+git push origin v1.2.0
+```
+
+### Commit Messages
+```bash
+# Good commit messages
+git commit -m "Add custom play time feature with track filtering"
+git commit -m "Fix memory leak in parallel track analysis"
+git commit -m "Update Spotify downloader error handling"
+
+# Bad commit messages
+git commit -m "Fix stuff"
+git commit -m "WIP"
+git commit -m "Updates"
+```
+
+## 🚀 Release Process
+
+### Version Management
+```python
+# In setup.py
+version="1.2.0"
+
+# In __init__.py
+__version__ = "1.2.0"
+```
+
+### Release Checklist
+- [ ] All tests pass
+- [ ] Documentation updated
+- [ ] Version numbers updated
+- [ ] CHANGELOG.md updated
+- [ ] Performance regression testing
+- [ ] Security review completed
+
+### Deployment
+```bash
+# Build package
+python setup.py sdist bdist_wheel
+
+# Upload to PyPI (if applicable)
+pip install twine
+twine upload dist/*
+```
+
+This development guide provides the foundation for maintaining high code quality and contributor productivity. For specific implementation details, refer to the component documentation in the respective directories.

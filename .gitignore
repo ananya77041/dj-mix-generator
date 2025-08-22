@@ -149,7 +149,7 @@ data/
 dj_mix.wav
 dj_mix_metadata.txt
 dj_transitions_preview.wav
-dj_transitions_preview_metadata.txt
+*_metadata.txt
 demo_mix.wav
 *.wav
 *.mp3
