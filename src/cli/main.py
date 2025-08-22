@@ -24,6 +24,7 @@ try:
     from ..core.audio_analyzer import AudioAnalyzer
     from ..core.mix_generator import MixGenerator
     from ..utils.key_matching import KeyMatcher
+    from ..utils.spotify_downloader import SpotifyPlaylistDownloader
     from ..core.models import Track
 except ImportError:
     # Fallback for direct execution - ensure src is in path
@@ -38,6 +39,7 @@ except ImportError:
     from core.audio_analyzer import AudioAnalyzer
     from core.mix_generator import MixGenerator
     from utils.key_matching import KeyMatcher
+    from utils.spotify_downloader import SpotifyPlaylistDownloader
     from core.models import Track
 
 
@@ -50,15 +52,28 @@ class DJMixGeneratorCLI:
         self.analyzer: AudioAnalyzer = None
         self.mixer: MixGenerator = None
         self.key_matcher: KeyMatcher = None
+        self.spotify_downloader: SpotifyPlaylistDownloader = None
     
     def run(self, args: List[str] = None) -> int:
         """Main entry point"""
         try:
             # Parse command line arguments
-            self.config, track_paths = parse_command_line()
+            self.config, track_input = parse_command_line()
             
             # Initialize components
             self._initialize_components()
+            
+            # Handle Spotify playlist or regular tracks
+            if isinstance(track_input, str):
+                # Spotify playlist URL
+                track_paths = self._download_spotify_playlist(track_input)
+                # Set default 16-measure transitions for Spotify playlists if not specified
+                if self.config.transition_settings.measures is None and self.config.transition_settings.seconds is None:
+                    self.config.transition_settings.measures = 16
+                    print("🎵 Using default 16-measure transitions for Spotify playlist")
+            else:
+                # List of track file paths
+                track_paths = track_input
             
             # Load and analyze tracks
             self._load_playlist(track_paths)
@@ -86,6 +101,13 @@ class DJMixGeneratorCLI:
         except Exception as e:
             print(f"❌ Error: {e}")
             return 1
+        finally:
+            # Cleanup temporary files if using Spotify downloader
+            if self.spotify_downloader:
+                try:
+                    self.spotify_downloader.cleanup()
+                except:
+                    pass  # Ignore cleanup errors
     
     def _initialize_components(self):
         """Initialize analysis and mixing components"""
@@ -100,6 +122,32 @@ class DJMixGeneratorCLI:
         )
         
         self.key_matcher = KeyMatcher()
+    
+    def _download_spotify_playlist(self, spotify_url: str) -> List[str]:
+        """Download tracks from Spotify playlist and return file paths"""
+        print(f"🎵 Downloading Spotify playlist: {spotify_url}")
+        
+        try:
+            # Initialize Spotify downloader
+            self.spotify_downloader = SpotifyPlaylistDownloader()
+            
+            # Download playlist
+            downloaded_files = self.spotify_downloader.download_playlist(spotify_url)
+            
+            if not downloaded_files:
+                raise ValueError("No tracks were downloaded from the playlist")
+            
+            print(f"✅ Successfully downloaded {len(downloaded_files)} tracks")
+            print("📁 Downloaded tracks:")
+            for i, filepath in enumerate(downloaded_files, 1):
+                filename = os.path.basename(filepath)
+                print(f"  {i}. {filename}")
+            
+            return downloaded_files
+            
+        except Exception as e:
+            print(f"❌ Failed to download Spotify playlist: {e}")
+            raise
     
     def _load_playlist(self, filepaths: List[str]):
         """Load and analyze all tracks in the playlist"""
