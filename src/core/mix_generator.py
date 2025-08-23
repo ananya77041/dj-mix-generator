@@ -235,12 +235,13 @@ class MixGenerator:
             # Apply time-stretching with varying tempo throughout the transition
             # We'll process the transition in small chunks with different stretch ratios
             # Use higher resolution for larger tempo differences to reduce artifacts
+            # Increased minimum chunk sizes to reduce stuttering in low-quality audio
             tempo_diff_ratio = max(start_bpm / end_bpm, end_bpm / start_bpm)
             if tempo_diff_ratio > 1.5:  # Large tempo difference
-                chunk_size = max(128, transition_samples // 400)  # ~400 chunks for extreme smoothness
+                chunk_size = max(512, transition_samples // 300)  # ~300 chunks, larger minimum
                 print(f"    Large tempo difference detected ({tempo_diff_ratio:.2f}x), using high-resolution ramping")
             else:
-                chunk_size = max(256, transition_samples // 200)  # ~200 chunks for ultra-smooth ramping
+                chunk_size = max(1024, transition_samples // 150)  # ~150 chunks, larger minimum
             
             ramped_track1 = []
             ramped_track2 = []
@@ -264,10 +265,32 @@ class MixGenerator:
                 track1_chunk = track1_overlap[start_idx:end_idx]
                 track2_chunk = track2_overlap[start_idx:end_idx]
                 
-                # Apply time-stretching to chunks
+                # Apply time-stretching to chunks with quality improvements for low bitrate audio
                 if abs(stretch_ratio_track1 - 1.0) > 0.01:  # Only stretch if meaningful difference
+                    # Pre-filter to reduce compression artifacts before time stretching
+                    if len(track1_chunk) > 512:  # Only filter if chunk is large enough
+                        from scipy.signal import butter, filtfilt
+                        try:
+                            # Gentle low-pass to remove high-frequency artifacts
+                            nyquist = sr / 2
+                            cutoff = min(8000, nyquist * 0.8)  # Remove harsh highs
+                            b, a = butter(2, cutoff / nyquist, btype='low')
+                            track1_chunk = filtfilt(b, a, track1_chunk)
+                        except:
+                            pass  # Continue without filtering if it fails
                     track1_chunk = librosa.effects.time_stretch(track1_chunk, rate=stretch_ratio_track1)
                 if abs(stretch_ratio_track2 - 1.0) > 0.01:
+                    # Pre-filter to reduce compression artifacts before time stretching  
+                    if len(track2_chunk) > 512:  # Only filter if chunk is large enough
+                        from scipy.signal import butter, filtfilt
+                        try:
+                            # Gentle low-pass to remove high-frequency artifacts
+                            nyquist = sr / 2
+                            cutoff = min(8000, nyquist * 0.8)  # Remove harsh highs
+                            b, a = butter(2, cutoff / nyquist, btype='low')
+                            track2_chunk = filtfilt(b, a, track2_chunk)
+                        except:
+                            pass  # Continue without filtering if it fails
                     track2_chunk = librosa.effects.time_stretch(track2_chunk, rate=stretch_ratio_track2)
                 
                 # Ensure chunks maintain original length (pad/trim if needed)
@@ -1249,12 +1272,13 @@ class MixGenerator:
         try:
             n_samples = len(track1_outro)
             # Use higher resolution for larger tempo differences to reduce artifacts
+            # Increased minimum chunk sizes to reduce stuttering in low-quality audio
             tempo_diff_ratio = max(start_bpm / end_bpm, end_bpm / start_bpm)
             if tempo_diff_ratio > 1.5:  # Large tempo difference
-                chunk_size = max(128, n_samples // 400)  # ~400 chunks for extreme smoothness
+                chunk_size = max(512, n_samples // 300)  # ~300 chunks, larger minimum
                 print(f"  Large tempo difference detected ({tempo_diff_ratio:.2f}x), using high-resolution ramping")
             else:
-                chunk_size = max(256, n_samples // 200)  # ~200 chunks for ultra-smooth ramping
+                chunk_size = max(1024, n_samples // 150)  # ~150 chunks, larger minimum
             
             ramped_track1 = []
             ramped_track2 = []
@@ -1290,10 +1314,32 @@ class MixGenerator:
                 track1_chunk = track1_outro[start_idx:end_idx]
                 track2_chunk = track2_intro[start_idx:end_idx]
                 
-                # Apply time-stretching to chunks if meaningful difference
+                # Apply time-stretching to chunks with quality improvements for low bitrate audio
                 if abs(track1_stretch_ratio - 1.0) > 0.01:
+                    # Pre-filter to reduce compression artifacts before time stretching
+                    if len(track1_chunk) > 512:  # Only filter if chunk is large enough
+                        from scipy.signal import butter, filtfilt
+                        try:
+                            # Gentle low-pass to remove high-frequency artifacts
+                            nyquist = track1.sr / 2
+                            cutoff = min(8000, nyquist * 0.8)  # Remove harsh highs
+                            b, a = butter(2, cutoff / nyquist, btype='low')
+                            track1_chunk = filtfilt(b, a, track1_chunk)
+                        except:
+                            pass  # Continue without filtering if it fails
                     track1_chunk = librosa.effects.time_stretch(track1_chunk, rate=track1_stretch_ratio)
                 if abs(track2_stretch_ratio - 1.0) > 0.01:
+                    # Pre-filter to reduce compression artifacts before time stretching
+                    if len(track2_chunk) > 512:  # Only filter if chunk is large enough
+                        from scipy.signal import butter, filtfilt
+                        try:
+                            # Gentle low-pass to remove high-frequency artifacts
+                            nyquist = track2.sr / 2
+                            cutoff = min(8000, nyquist * 0.8)  # Remove harsh highs
+                            b, a = butter(2, cutoff / nyquist, btype='low')
+                            track2_chunk = filtfilt(b, a, track2_chunk)
+                        except:
+                            pass  # Continue without filtering if it fails
                     track2_chunk = librosa.effects.time_stretch(track2_chunk, rate=track2_stretch_ratio)
                 
                 # Ensure chunks maintain original length (pad/trim if needed)
@@ -1467,11 +1513,11 @@ class MixGenerator:
                 print(f"    Warning: LF cutoff ({lf_cutoff} Hz) >= Nyquist frequency ({nyquist} Hz), skipping LF blending")
                 return track1_outro, track2_intro
             
-            # Create low-pass and high-pass filters
+            # Create low-pass and high-pass filters with gentler slopes
             # Low-pass: keeps frequencies below cutoff
-            lp_b, lp_a = butter(4, lf_cutoff / nyquist, btype='low')
+            lp_b, lp_a = butter(3, lf_cutoff / nyquist, btype='low')
             # High-pass: keeps frequencies above cutoff  
-            hp_b, hp_a = butter(4, lf_cutoff / nyquist, btype='high')
+            hp_b, hp_a = butter(3, lf_cutoff / nyquist, btype='high')
             
             n_samples = len(track1_outro)
             
@@ -1497,6 +1543,14 @@ class MixGenerator:
             track2_lf_processed = track2_lf * linear_fade_in
             track2_hf_processed = track2_hf * linear_fade_in
             track2_processed = track2_lf_processed + track2_hf_processed
+            
+            # Apply gentle normalization to prevent reconstruction artifacts
+            track1_peak = np.max(np.abs(track1_processed))
+            track2_peak = np.max(np.abs(track2_processed))
+            if track1_peak > 0.9:
+                track1_processed = track1_processed * (0.9 / track1_peak)
+            if track2_peak > 0.9:
+                track2_processed = track2_processed * (0.9 / track2_peak)
             
             print(f"    Low-frequency blending applied (cutoff: {lf_cutoff} Hz)")
             return track1_processed, track2_processed
@@ -1540,13 +1594,13 @@ class MixGenerator:
                 print(f"    Warning: MF cutoffs ({lf_cutoff}-{hf_cutoff} Hz) >= Nyquist frequency ({nyquist} Hz), skipping MF blending")
                 return track1_outro, track2_intro
             
-            # Create band-pass and other filters
+            # Create band-pass and other filters with gentler slopes to reduce artifacts
             # Low-pass: keeps frequencies below lf_cutoff (bass)
-            lp_b, lp_a = butter(4, lf_cutoff / nyquist, btype='low')
+            lp_b, lp_a = butter(3, lf_cutoff / nyquist, btype='low')
             # Band-pass: keeps frequencies between lf_cutoff and hf_cutoff (mids)
-            bp_b, bp_a = butter(4, [lf_cutoff / nyquist, hf_cutoff / nyquist], btype='band')
+            bp_b, bp_a = butter(3, [lf_cutoff / nyquist, hf_cutoff / nyquist], btype='band')
             # High-pass: keeps frequencies above hf_cutoff (highs)
-            hp_b, hp_a = butter(4, hf_cutoff / nyquist, btype='high')
+            hp_b, hp_a = butter(3, hf_cutoff / nyquist, btype='high')
             
             n_samples = len(track1_outro)
             
@@ -1576,6 +1630,14 @@ class MixGenerator:
             track2_mf_processed = track2_mf * linear_fade_in
             track2_hf_processed = track2_hf * linear_fade_in
             track2_processed = track2_lf_processed + track2_mf_processed + track2_hf_processed
+            
+            # Apply gentle normalization to prevent reconstruction artifacts
+            track1_peak = np.max(np.abs(track1_processed))
+            track2_peak = np.max(np.abs(track2_processed))
+            if track1_peak > 0.9:
+                track1_processed = track1_processed * (0.9 / track1_peak)
+            if track2_peak > 0.9:
+                track2_processed = track2_processed * (0.9 / track2_peak)
             
             print(f"    Mid-frequency blending applied (range: {lf_cutoff}-{hf_cutoff} Hz)")
             return track1_processed, track2_processed
@@ -1630,7 +1692,9 @@ class MixGenerator:
             # Band-pass: keeps frequencies between lf_cutoff and mf_cutoff (mids)  
             bp_b, bp_a = butter(4, [lf_cutoff / nyquist, mf_cutoff / nyquist], btype='band')
             # Band-pass for highs: keeps frequencies between mf_cutoff and hf_cutoff (highs)
-            hp_b, hp_a = butter(4, [mf_cutoff / nyquist, min(hf_cutoff / nyquist, 0.95)], btype='band')
+            # Limit upper cutoff to prevent aliasing artifacts
+            safe_hf_cutoff = min(hf_cutoff / nyquist, 0.85)  # More conservative limit
+            hp_b, hp_a = butter(3, [mf_cutoff / nyquist, safe_hf_cutoff], btype='band')  # Gentler 3rd order
             
             n_samples = len(track1_outro)
             
@@ -1667,6 +1731,14 @@ class MixGenerator:
             track2_mf_processed = track2_mf * linear_fade_in
             track2_hf_processed = track2_hf * linear_fade_in  
             track2_processed = track2_lf_processed + track2_mf_processed + track2_hf_processed
+            
+            # Apply gentle normalization to prevent reconstruction artifacts
+            track1_peak = np.max(np.abs(track1_processed))
+            track2_peak = np.max(np.abs(track2_processed))
+            if track1_peak > 0.9:
+                track1_processed = track1_processed * (0.9 / track1_peak)
+            if track2_peak > 0.9:
+                track2_processed = track2_processed * (0.9 / track2_peak)
             
             print(f"    High-frequency blending applied (range: {mf_cutoff}-{hf_cutoff} Hz)")
             return track1_processed, track2_processed
